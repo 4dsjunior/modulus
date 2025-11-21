@@ -18,7 +18,25 @@ export async function login(formData: FormData) {
     return redirect('/login?error=invalid_credentials')
   }
 
-  // 2. Verificar Roteamento Inteligente
+  // ==============================================================
+  // 2. VERIFICAÇÃO DE SUPER ADMIN (O Passo que Faltava)
+  // ==============================================================
+  
+  // Buscamos o perfil para saber se é o dono do SaaS
+  const { data: profile } = await supabase
+   .from('profiles')
+   .select('is_super_admin')
+   .single()
+
+  // Se for Super Admin, vai direto para o painel de criação
+  if (profile && profile.is_super_admin) {
+    return redirect('/admin/users')
+  }
+
+  // ==============================================================
+  // 3. FLUXO DE CLIENTE COMUM (Roteamento Inteligente)
+  // ==============================================================
+  
   const { data: rawMember } = await supabase
    .from('tenant_members')
    .select(`
@@ -34,38 +52,34 @@ export async function login(formData: FormData) {
 
   const member: any = rawMember
 
+  // Se não for Admin e não tiver empresa, aí sim é erro
   if (!member || !member.tenants) {
     return redirect('/login?error=no_tenant') 
   }
 
-  // 3. Extração de Dados
-  
-  // Garante que 'tenantData' seja um Objeto único
+  // Tratamento de dados (Arrays vs Objetos)
   let tenantData = member.tenants
   if (Array.isArray(tenantData)) {
-    tenantData = tenantData[0] // Pega o primeiro se for array
+    tenantData = tenantData[0]
   }
 
   const slug = tenantData.slug
   let activeModule = 'core'
 
-  // Lógica do Módulo (CORREÇÃO DO ERRO DE ARRAY)
   const modules = tenantData.tenant_modules
 
   if (modules) {
     if (Array.isArray(modules)) {
-      // SE FOR LISTA: Pega o primeiro item com [0]
       if (modules.length > 0) {
         activeModule = modules[0].module_id
       }
     } else {
-      // SE FOR OBJETO: Acessa direto
       if (modules.module_id) {
         activeModule = modules.module_id
       }
     }
   }
 
-  // 4. Redirecionamento Final
+  // 4. Redirecionamento Final do Cliente
   return redirect(`/${activeModule}/${slug}/dashboard`)
 }

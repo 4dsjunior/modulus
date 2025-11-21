@@ -1,0 +1,55 @@
+# Contexto do Projeto Modulus Platform
+
+## Visão Geral
+
+O projeto é uma plataforma SaaS multi-tenant construída com Next.js, TypeScript, Tailwind CSS e Supabase. O objetivo é permitir que um "super admin" gerencie clientes (tenants), e que os usuários desses clientes acessem módulos específicos da plataforma.
+
+## Estado Atual do Código
+
+O código foi refatorado para separar a lógica de administração de usuários da lógica de criação de tenants.
+
+### Fluxo de Login
+
+-   **Super Admin:** Ao fazer login, é redirecionado para a página de administração de usuários em `/admin/users`.
+-   **Usuário Comum:** Ao fazer login, é redirecionado para o dashboard do seu tenant, com base no `slug` do tenant e no `module_id` ativo.
+
+### Administração de Usuários (`/admin/users`)
+
+-   **Listagem de Usuários:** A página `/admin/users` agora lista todos os usuários do sistema, buscando-os da tabela `auth.users` do Supabase.
+-   **Criação de Usuário/Tenant:** O botão "Novo Usuário" nesta página leva para `/admin/create`, que contém o formulário original para provisionar um novo cliente (tenant) e seu primeiro usuário (owner). **Esta lógica foi restaurada e está funcionando como o esperado.**
+-   **Edição de Usuário:** A partir da lista de usuários, é possível clicar em "Editar" para acessar a página de edição de um usuário específico.
+    -   A página de edição (`/admin/users/edit/[id]`) agora busca o usuário corretamente pelo ID de autenticação.
+    -   É possível atualizar o nome completo, o email e a senha (opcionalmente).
+-   **Exclusão de Usuário:** O botão "Excluir" na lista de usuários agora funciona corretamente.
+    -   A lógica de exclusão primeiro remove as associações do usuário na tabela `tenant_members` antes de deletar o usuário da `auth.users`. Isso evita erros de constraints de chave estrangeira.
+
+### Correções Implementadas
+
+1.  **Erro de Edição de Usuário:**
+    -   **Causa:** O erro de `source map` e `Expected parameter to be UUID` era causado por uma falha na obtenção do `params.id` na página de edição, um problema comum em Server Components do Next.js.
+    -   **Solução:** A página foi ajustada para lidar corretamente com o `params` e a função `getUserById` foi centralizada no `actions.ts`.
+2.  **Erro de Exclusão de Usuário:**
+    -   **Causa:** O erro `500 Internal Server Error` ocorria porque o banco de dados impedia a exclusão de um usuário que ainda tinha registros associados em `tenant_members`.
+    -   **Solução:** A função `deleteUser` agora remove primeiro as dependências em `tenant_members` e depois deleta o usuário principal, garantindo a integridade referencial.
+3.  **Navegação:**
+    -   Foram adicionados botões "Voltar" nas páginas de criação e edição para melhorar a usabilidade da navegação no painel de administração.
+
+## Estrutura de Diretórios Relevante
+
+-   `app/login/actions.ts`: Contém a lógica de login e redirecionamento para super admins e usuários comuns.
+-   `app/admin/layout.tsx`: Layout principal para todas as páginas da área de administração.
+-   `app/admin/create/`: Diretório restaurado que contém a lógica original para criar um novo tenant e seu usuário principal.
+    -   `page.tsx`: O formulário.
+    -   `actions.ts`: A server action `createTenant`.
+-   `app/admin/users/`: Novo diretório para a administração de usuários existentes.
+    -   `page.tsx`: Lista todos os usuários e linka para as ações.
+    -   `edit/[id]/page.tsx`: Página dinâmica para edição de usuário.
+    -   `delete/[id]/route.ts`: Rota de API para exclusão de usuário.
+    -   `actions.ts`: Contém as server actions `getUsers`, `getUserById`, `updateUser` e `deleteUser`.
+
+## Próximos Passos Sugeridos
+
+-   Implementar mensagens de feedback (toast notifications) mais robustas para sucesso e erro, em vez de usar apenas query params na URL.
+-   Adicionar paginação à lista de usuários para lidar com um grande número de registros.
+-   Refinar o formulário de edição para permitir a alteração de outros metadados do usuário, se necessário.
+-   Criar testes para as server actions para garantir a estabilidade do código.
