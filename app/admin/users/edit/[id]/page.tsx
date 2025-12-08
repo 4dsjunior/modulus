@@ -2,8 +2,13 @@
 import { updateUser, getUserById } from '../../actions'
 import Link from 'next/link'
 
-export default async function EditUserPage({ params }: { params: { id: string } }) {
-  const { data: user, error } = await getUserById(params.id)
+// Atualize a tipagem para Promise
+export default async function EditUserPage({ params }: { params: Promise<{ id: string }> }) {
+  // Aguarde a resolução dos parâmetros
+  const { id } = await params
+  
+  // Agora use o id resolvido
+  const { data: user, error } = await getUserById(id)
 
   if (error || !user) {
     return <div>Usuário não encontrado ou erro ao carregar: {error?.message}</div>

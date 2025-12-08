@@ -21,8 +21,7 @@ export async function getUsers() {
 }
 
 export async function getUserById(userId: string) {
-  const idAsString = String(userId);
-  const { data: { user }, error } = await supabaseAdmin.auth.admin.getUserById(idAsString)
+  const { data: { user }, error } = await supabaseAdmin.auth.admin.getUserById(userId)
   if (error) {
     console.error('Erro ao buscar usuário:', error)
     return { data: null, error }
