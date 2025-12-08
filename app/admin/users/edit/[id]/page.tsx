@@ -1,5 +1,5 @@
 
-import { updateUser, getUserById } from '../../../actions'
+import { updateUser, getUserById } from '../../actions'
 import Link from 'next/link'
 
 export default async function EditUserPage({ params }: { params: { id: string } }) {

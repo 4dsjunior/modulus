@@ -1,5 +1,5 @@
 
-import { getUsers } from './actions'
+import { getUsers, deleteUser } from './actions'
 import Link from 'next/link'
 
 export default async function AdminUsersPage() {
@@ -28,22 +28,25 @@ export default async function AdminUsersPage() {
             </tr>
           </thead>
           <tbody>
-            {users?.map(user => (
-              <tr key={user.id} className="border-b border-slate-100">
-                <td className="p-4 text-slate-800">{user.email}</td>
-                <td className="p-4 text-slate-600">{new Date(user.created_at).toLocaleDateString()}</td>
-                <td className="p-4 flex gap-2">
-                  <Link href={`/admin/users/edit/${user.id}`} className="text-blue-600 hover:underline">
-                    Editar
-                  </Link>
-                  <form action={`/admin/users/delete/${user.id}`} method="POST">
-                    <button type="submit" className="text-red-600 hover:underline">
-                      Excluir
-                    </button>
-                  </form>
-                </td>
-              </tr>
-            ))}
+            {users?.map(user => {
+              console.log('--- DEBUG: User object in map:', JSON.stringify(user, null, 2));
+              return (
+                <tr key={user.id} className="border-b border-slate-100">
+                  <td className="p-4 text-slate-800">{user.email}</td>
+                  <td className="p-4 text-slate-600">{new Date(user.created_at).toLocaleDateString()}</td>
+                  <td className="p-4 flex gap-2">
+                    <Link href={`/admin/users/edit/${user.id}`} className="text-blue-600 hover:underline">
+                      Editar
+                    </Link>
+                    <form action={deleteUser.bind(null, user.id)}>
+                      <button type="submit" className="text-red-600 hover:underline">
+                        Excluir
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
