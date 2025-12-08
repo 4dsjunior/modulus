@@ -1,0 +1,175 @@
+Documentação Técnica: Painel de Validação Financeira (MOCK)
+
+Este documento detalha a arquitetura, o Design System e a lógica de front-end aplicados no Painel de Validação Financeira da Academia MVP, conforme implementado no arquivo index.html.
+
+1. Design System e Identidade Visual
+
+O dashboard adota um Design System Clean e Industrial, focado em alta legibilidade e contraste, ideal para ambientes de gestão.
+
+1.1. Paleta de Cores (Regra 80/20/10)
+
+Uso
+
+HEX
+
+Descrição
+
+Fundo Principal
+
+#F4F6F8
+
+80% Neutro. Background geral, levemente cinza, para foco no conteúdo.
+
+Primária (Azul Aço)
+
+#232F34
+
+20% Primário. Títulos, textos principais e elementos de estabilidade/profisionalismo.
+
+Acento Energético
+
+#FF9800
+
+10% Acento. Botões de Ação (CTAs, Cadastrar) e destaques de previsão. Transmite energia.
+
+Sucesso/Recebido
+
+#4CAF50
+
+Verde. Valores aprovados e estatísticas positivas.
+
+Alerta/Pendente
+
+#FF5722
+
+Laranja Avermelhado. Pagamentos em falta ou alertas.
+
+Texto Secundário
+
+#6C757D
+
+Cinza. Subtítulos, labels e texto de suporte.
+
+1.2. Tipografia
+
+Foram usadas duas fontes Google Fonts para estabelecer uma hierarquia clara:
+
+Elemento
+
+Fonte
+
+Peso
+
+Tamanho (Desktop)
+
+H1 (Título Principal)
+
+Raleway
+
+Bold
+
+32px (2rem)
+
+H2 / Títulos de Seção
+
+Raleway
+
+SemiBold
+
+24px (1.5rem)
+
+Valores KPI
+
+Raleway
+
+Bold
+
+28px (1.75rem)
+
+Valores Status Mensal
+
+Quicksand
+
+Bold
+
+32px (2rem)
+
+Corpo/Textos
+
+Quicksand
+
+Regular/Medium
+
+14px - 18px
+
+Labels da Tabela
+
+Quicksand
+
+SemiBold
+
+12px (0.75rem)
+
+2. Arquitetura Front-end (HTML/JavaScript)
+
+O projeto é construído em um único arquivo HTML utilizando JavaScript Vanilla para a lógica e Tailwind CSS (via CDN) para o estilo, garantindo alta performance e portabilidade.
+
+2.1. Estrutura de Layout (UX/UI)
+
+KPIs (Key Performance Indicators):
+
+Exibidos em cards brancos (#FFFFFF) com sombras sutis (shadow-kpi).
+
+Bordas laterais coloridas para categorização: Primária (Acumulado), Acento (Previsão) e Sucesso (Alunos Ativos).
+
+Status Mensal:
+
+Painel expandido que mostra a diferença entre Esperado, Recebido e Em Falta.
+
+Usa tamanhos de fonte grandes (2rem) para os valores, garantindo impacto imediato.
+
+Tabela de Pagamentos Pendentes:
+
+Design zebrado (linhas alternadas em #F8F9FA) para melhorar a leitura em linhas longas.
+
+Valores pendentes em cor de Alerta (#FF5722) e botão de ação em Laranja Acento (#FF9800).
+
+Segmentação de Alunos Ativos:
+
+Apresenta os dados em formato de lista hierárquica e um gráfico interativo (Doughnut Chart).
+
+Correção de UX/UI: Os ícones de gênero foram substituídos pelas letras M e F para garantir consistência e legibilidade em todos os dispositivos.
+
+2.2. Lógica de Dados (Mock e Funções Principais)
+
+Todos os dados são simulados em memória (Mock Data) para demonstrar a funcionalidade sem dependência de um backend real.
+
+a) Estado Global (MOCK)
+
+let mockPendingPayments = []; // Pagamentos aguardando aprovação
+let mockStats = { approvedPayments: [], students: [] }; // Alunos e histórico de pagamentos
+let modalityFrequencyCounts = {}; // Estrutura de contagem de alunos por Modalidade/Frequência
+let modalityRevenueCounts = {}; // Faturamento potencial por Modalidade
+
+
+b) Funções de Renderização Dinâmica
+
+renderModalityFrequency(data): Constrói a lista hierárquica de alunos ativos.
+
+updateChart(id, type, labels, data, ...): Utiliza a biblioteca Chart.js para criar gráficos de rosca (Doughnut) dinamicamente, alternando entre Contagem de Alunos e Faturamento Potencial (dependendo da interação do usuário).
+
+renderPrimaryModalityChart(): Modo padrão do gráfico, focado no Faturamento Potencial por Modalidade.
+
+renderFrequencyChart(modality): Ativado por clique na lista, quebra a contagem de alunos por frequência dentro da modalidade selecionada.
+
+c) Lógica de Negócios (Simulada)
+
+approvePayment(paymentId, ...): Remove o pagamento da lista mockPendingPayments, adiciona ao mockStats.approvedPayments e simula a atualização da due_date do aluno para +30 dias.
+
+fetchAndRenderStatistics(): Recalcula todas as KPIs (Faturamento Anual, Recebido Mensal, Previsto, Alunos Ativos) e atualiza a segmentação a cada alteração de estado.
+
+registerNewStudent(formData): Adiciona um novo aluno à lista mockStats.students e recalcula as estatísticas.
+
+d) Modais de UX
+
+O projeto utiliza modais customizados (#confirmation-modal e #registration-modal) em vez das funções nativas alert() e confirm(), garantindo uma experiência de usuário consistente e não-bloqueante.
