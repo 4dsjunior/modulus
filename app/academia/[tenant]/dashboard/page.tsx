@@ -1,28 +1,25 @@
-'use client'; 
+'use client';
 
-import {
-  getDashboardStats,
-  getSegmentationData,
+import { useState, useMemo, useEffect } from 'react';
+import { Doughnut } from 'react-chartjs-2';
+import 'chart.js/auto';
+
+import type {
   DashboardStats,
   SegmentationCounts,
-  registerNewStudent,
-  approvePayment,
-  NewStudentData,
-} from './actions';
-import { useState, useEffect, useMemo } from 'react';
-import { Doughnut } from 'react-chartjs-2'; 
-import 'chart.js/auto'; 
+  NewStudentData
+} from '../../actions';
 
 // =================================================================
-// CONFIGURAÇÕES E UTILITÁRIOS
+// CONFIGURAÇÕES VISUAIS
 // =================================================================
 
 const MODALITY_COLORS: Record<string, string> = {
-  'Jiu-Jitsu': '#FF5722', 
-  'Crossfit': '#232F34',   
-  'Musculação': '#FF9800', 
-  'Yoga': '#6C757D', 
-  'Não Informado': '#E0E0E0' 
+  'Jiu-Jitsu': '#FF5722',
+  'Crossfit': '#232F34',
+  'Musculação': '#FF9800',
+  'Yoga': '#6C757D',
+  'Não Informado': '#E0E0E0'
 };
 const FREQUENCY_COLORS = ['#FF9800', '#232F34', '#4CAF50', '#FF5722', '#6C757D'];
 
@@ -31,12 +28,33 @@ const formatCurrency = (value: number) => {
 };
 
 // =================================================================
+// INTERFACES (PROPS)
+// =================================================================
+
+interface DashboardClientProps {
+  tenantName: string;
+  initialStats: DashboardStats;
+  initialSegmentation: SegmentationCounts;
+  registerAction: (data: NewStudentData) => Promise<{ success: boolean; message: string }>;
+  approveAction: (paymentId: string, studentId: string, amount: number) => Promise<{ success: boolean; message: string }>;
+  refreshAction: () => Promise<[DashboardStats, SegmentationCounts]>; 
+}
+
+// =================================================================
 // COMPONENTE PRINCIPAL
 // =================================================================
 
-export default function AcademiaDashboard() {
-  // Estado Inicial
-  const [stats, setStats] = useState<DashboardStats>({
+export default function DashboardClient({ 
+  tenantName, 
+  initialStats, 
+  initialSegmentation,
+  registerAction,
+  approveAction,
+  refreshAction
+}: DashboardClientProps) {
+  
+  // Estado inicial com fallbacks robustos para evitar undefined
+  const [stats, setStats] = useState<DashboardStats>(initialStats || {
     annualRevenue: 0,
     nextMonthForecast: 0,
     totalStudents: 0,
@@ -44,72 +62,58 @@ export default function AcademiaDashboard() {
     monthlyReceived: 0,
     pendingPayments: []
   });
-  const [segmentation, setSegmentation] = useState<SegmentationCounts>({
+
+  const [segmentation, setSegmentation] = useState<SegmentationCounts>(initialSegmentation || {
     modalityFrequencyCounts: {},
     modalityRevenueCounts: {}
   });
+  
+  // Atualiza o estado se as props mudarem (ex: navegação ou revalidação)
+  useEffect(() => {
+    if (initialStats) setStats(initialStats);
+    if (initialSegmentation) setSegmentation(initialSegmentation);
+  }, [initialStats, initialSegmentation]);
 
-  // Estado de UI
-  const [loading, setLoading] = useState(true);
-  const [tenantName, setTenantName] = useState('Academia');
+  // Estados de UI
+  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   
-  // Modais e Seleções
+  // Estados de Modais
   const [isRegistrationModalOpen, setIsRegistrationModalOpen] = useState(false);
   const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
   const [confirmationAction, setConfirmationAction] = useState<{ paymentId: string, studentId: string, amount: number } | null>(null);
   const [selectedModality, setSelectedModality] = useState<string | null>(null);
-
-  // Carregar dados no Client-Side (Substitui o Server Component wrapper)
-  useEffect(() => {
-    let mounted = true;
-    const loadData = async () => {
-      try {
-        const [statsData, segData] = await Promise.all([
-          getDashboardStats(),
-          getSegmentationData()
-        ]);
-        
-        if (mounted) {
-          setStats(statsData);
-          setSegmentation(segData);
-          // O nome do tenant poderia vir de outra action, mas deixamos fixo ou genérico por enquanto 
-          // para evitar mais chamadas complexas, já que o foco é o dashboard.
-          setLoading(false);
-        }
-      } catch (error) {
-        console.error("Falha ao carregar dashboard", error);
-        if (mounted) setLoading(false);
-      }
-    };
-    loadData();
-    return () => { mounted = false; };
-  }, []);
 
   const showMessage = (text: string, type: 'success' | 'error') => {
     setMessage({ text, type });
     setTimeout(() => setMessage(null), 5000);
   };
 
-  const refreshData = async () => {
+  const handleRefresh = async () => {
     setLoading(true);
     try {
-      const [newStats, newSeg] = await Promise.all([getDashboardStats(), getSegmentationData()]);
-      setStats(newStats);
-      setSegmentation(newSeg);
-    } catch (e) { showMessage("Erro ao atualizar dados.", 'error'); }
+      const [newStats, newSeg] = await refreshAction();
+      if (newStats) setStats(newStats);
+      if (newSeg) setSegmentation(newSeg);
+    } catch (e) {
+      showMessage("Erro ao atualizar dados.", 'error');
+    }
     setLoading(false);
   };
 
   const handleRegister = async (data: NewStudentData) => {
     setLoading(true);
-    const res = await registerNewStudent(data);
-    if (res.success) {
-      showMessage(res.message, 'success');
-      setIsRegistrationModalOpen(false);
-      refreshData();
-    } else {
-      showMessage(res.message, 'error');
+    try {
+      const res = await registerAction(data);
+      if (res.success) {
+        showMessage(res.message, 'success');
+        setIsRegistrationModalOpen(false);
+        handleRefresh();
+      } else {
+        showMessage(res.message, 'error');
+      }
+    } catch (e) {
+      showMessage("Erro ao registrar aluno.", 'error');
     }
     setLoading(false);
   };
@@ -117,17 +121,37 @@ export default function AcademiaDashboard() {
   const confirmPayment = async () => {
     if (!confirmationAction) return;
     setLoading(true);
-    const res = await approvePayment(confirmationAction.paymentId, confirmationAction.studentId, confirmationAction.amount);
-    if (res.success) { showMessage(res.message, 'success'); refreshData(); }
-    else { showMessage(res.message, 'error'); }
+    try {
+      const res = await approveAction(confirmationAction.paymentId, confirmationAction.studentId, confirmationAction.amount);
+      if (res.success) { 
+        showMessage(res.message, 'success'); 
+        handleRefresh(); 
+      } else { 
+        showMessage(res.message, 'error'); 
+      }
+    } catch (e) {
+      showMessage("Erro ao aprovar pagamento.", 'error');
+    }
     setIsConfirmationModalOpen(false);
     setLoading(false);
   };
 
-  // Lógica do Gráfico
+  // Cálculo dos dados do gráfico com verificação explícita de nulidade
   const chartData = useMemo(() => {
-    const counts = segmentation.modalityFrequencyCounts;
-    const revs = segmentation.modalityRevenueCounts;
+    // PROTEÇÃO CRÍTICA: Se segmentation for nulo/undefined, retorna objeto vazio seguro
+    if (!segmentation) {
+      return {
+        title: 'Carregando...',
+        labels: [],
+        data: [],
+        colors: [],
+        isRev: true
+      };
+    }
+
+    // Acessa propriedades com fallback para evitar erros de leitura
+    const counts = segmentation.modalityFrequencyCounts || {};
+    const revs = segmentation.modalityRevenueCounts || {};
 
     if (selectedModality && counts[selectedModality]) {
       const modData = counts[selectedModality];
@@ -153,30 +177,30 @@ export default function AcademiaDashboard() {
 
   return (
     <div className="max-w-4xl mx-auto p-6 bg-white rounded-2xl shadow-xl font-['Quicksand']">
-      {/* Header */}
       <header className="flex justify-between items-center mb-8 border-b pb-4">
-        <h1 className="text-2xl font-bold text-[#232F34]">Painel Financeiro</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-[#232F34]">Painel Financeiro</h1>
+          <p className="text-sm text-gray-500 mt-1">Unidade: <span className="font-semibold text-[#FF9800]">{tenantName}</span></p>
+        </div>
         <button onClick={() => setIsRegistrationModalOpen(true)} className="bg-[#FF9800] text-white px-4 py-2 rounded-lg hover:bg-[#E68900] shadow-md transition">
           Novo Aluno
         </button>
       </header>
 
-      {/* Feedback UI */}
       {message && <div className={`p-3 rounded mb-4 text-center font-medium ${message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{message.text}</div>}
       
-      {/* Cards KPI */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <KpiCard title="Faturamento Anual" value={loading ? '...' : formatCurrency(stats.annualRevenue)} color="border-[#232F34]" />
-        <KpiCard title="Previsão Mês" value={loading ? '...' : formatCurrency(stats.nextMonthForecast)} color="border-[#FF9800]" />
-        <KpiCard title="Alunos Ativos" value={loading ? '...' : stats.totalStudents.toString()} color="border-[#4CAF50]" />
+        <KpiCard title="Faturamento Anual" value={loading ? '...' : formatCurrency(stats?.annualRevenue || 0)} color="border-[#232F34]" />
+        <KpiCard title="Previsão Mês" value={loading ? '...' : formatCurrency(stats?.nextMonthForecast || 0)} color="border-[#FF9800]" />
+        <KpiCard title="Alunos Ativos" value={loading ? '...' : (stats?.totalStudents || 0).toString()} color="border-[#4CAF50]" />
       </div>
 
-      {/* Área Principal: Segmentação e Gráfico */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
         {/* Lista de Modalidades */}
         <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
           <h3 className="font-bold text-lg mb-4 text-[#232F34]">Modalidades</h3>
-          {loading ? <p className="text-gray-400">Carregando...</p> : Object.keys(segmentation.modalityFrequencyCounts).length === 0 ? <p>Sem dados.</p> : 
+          {loading ? <p className="text-gray-400">Carregando...</p> : 
+           !segmentation?.modalityFrequencyCounts || Object.keys(segmentation.modalityFrequencyCounts).length === 0 ? <p>Sem dados.</p> : 
            Object.keys(segmentation.modalityFrequencyCounts).map(mod => (
              <div key={mod} onClick={() => setSelectedModality(selectedModality === mod ? null : mod)} 
                   className={`p-3 mb-2 cursor-pointer rounded-lg transition-all border ${selectedModality === mod ? 'bg-white border-[#FF9800] shadow-sm' : 'bg-white border-transparent hover:border-gray-200'}`}>
@@ -210,7 +234,6 @@ export default function AcademiaDashboard() {
                   tooltip: { 
                     callbacks: { 
                       label: (ctx) => {
-                        // CORREÇÃO SINTAXE: Concatenação segura e simples
                         const labelStr = ctx.label ? `${ctx.label}: ` : '';
                         const val = ctx.parsed;
                         const suffix = chartData.isRev ? formatCurrency(val) : `${val} alunos`;
@@ -227,7 +250,7 @@ export default function AcademiaDashboard() {
 
       {/* Tabela de Pagamentos */}
       <h2 className="text-xl font-bold mb-4 text-[#232F34]">Pagamentos Pendentes</h2>
-      {loading ? <p>Verificando pagamentos...</p> : stats.pendingPayments.length === 0 ? (
+      {loading ? <p>Verificando pagamentos...</p> : !stats?.pendingPayments || stats.pendingPayments.length === 0 ? (
         <div className="p-4 bg-green-50 text-green-700 rounded-lg border border-green-100 flex items-center">
           <span className="mr-2">✓</span> Todos os pagamentos em dia.
         </div>
@@ -322,7 +345,6 @@ export default function AcademiaDashboard() {
         </div>
       )}
 
-      {/* Modal Confirmação */}
       {isConfirmationModalOpen && confirmationAction && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm">
@@ -339,7 +361,6 @@ export default function AcademiaDashboard() {
   );
 }
 
-// Subcomponente simples para Cards
 const KpiCard = ({ title, value, color }: { title: string, value: string, color: string }) => (
   <div className={`p-5 bg-white shadow-sm rounded-xl border-l-4 ${color} border border-gray-100`}>
     <p className="text-gray-500 text-sm font-medium uppercase tracking-wide">{title}</p>
