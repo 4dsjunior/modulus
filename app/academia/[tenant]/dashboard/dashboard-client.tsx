@@ -2,7 +2,14 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { Doughnut } from 'react-chartjs-2';
-import 'chart.js/auto';
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend
+} from 'chart.js';
+
+ChartJS.register(ArcElement, Tooltip, Legend);
 
 import type {
   DashboardStats,
@@ -11,24 +18,27 @@ import type {
 } from '../../actions';
 
 // =================================================================
-// CONFIGURAÇÕES VISUAIS
+// CONFIGURAÇÕES VISUAIS (Idênticas ao Mockup HTML)
 // =================================================================
 
 const MODALITY_COLORS: Record<string, string> = {
-  'Jiu-Jitsu': '#FF5722',
-  'Crossfit': '#232F34',
-  'Musculação': '#FF9800',
+  'Jiu-Jitsu': 'rgb(255, 99, 132)', // Vermelho
+  'Crossfit': 'rgb(54, 162, 235)',   // Azul
+  'Musculação': 'rgb(255, 205, 86)', // Amarelo
   'Yoga': '#6C757D',
-  'Não Informado': '#E0E0E0'
+  'Não Informado': 'rgb(201, 203, 207)' // Cinza
 };
-const FREQUENCY_COLORS = ['#FF9800', '#232F34', '#4CAF50', '#FF5722', '#6C757D'];
+
+const FREQUENCY_COLORS = [
+  'rgb(75, 192, 192)', 'rgb(153, 102, 255)', 'rgb(255, 159, 64)', 'rgb(50, 200, 50)', 'rgb(200, 50, 50)'
+];
 
 const formatCurrency = (value: number) => {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 };
 
 // =================================================================
-// INTERFACES (PROPS)
+// INTERFACE DE PROPS (Conexão com Server)
 // =================================================================
 
 interface DashboardClientProps {
@@ -53,317 +63,338 @@ export default function DashboardClient({
   refreshAction
 }: DashboardClientProps) {
   
-  // Estado inicial com fallbacks robustos para evitar undefined
+  // --- ESTADO LOCAL ---
   const [stats, setStats] = useState<DashboardStats>(initialStats || {
-    annualRevenue: 0,
-    nextMonthForecast: 0,
-    totalStudents: 0,
-    monthlyExpected: 0,
-    monthlyReceived: 0,
-    pendingPayments: []
+    annualRevenue: 0, nextMonthForecast: 0, totalStudents: 0, monthlyExpected: 0, monthlyReceived: 0, pendingPayments: []
   });
-
-  const [segmentation, setSegmentation] = useState<SegmentationCounts>(initialSegmentation || {
-    modalityFrequencyCounts: {},
-    modalityRevenueCounts: {}
-  });
+  const [segmentation, setSegmentation] = useState<SegmentationCounts>(initialSegmentation || { modalityFrequencyCounts: {}, modalityRevenueCounts: {} });
   
-  // Atualiza o estado se as props mudarem (ex: navegação ou revalidação)
+  // UI States
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [selectedModality, setSelectedModality] = useState<string | null>(null);
+
+  // Modal States
+  const [isRegistrationModalOpen, setIsRegistrationModalOpen] = useState(false);
+  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
+  const [confirmationAction, setConfirmationAction] = useState<{ paymentId: string, studentId: string, amount: number } | null>(null);
+
+  // Sync props -> state
   useEffect(() => {
     if (initialStats) setStats(initialStats);
     if (initialSegmentation) setSegmentation(initialSegmentation);
   }, [initialStats, initialSegmentation]);
 
-  // Estados de UI
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-  
-  // Estados de Modais
-  const [isRegistrationModalOpen, setIsRegistrationModalOpen] = useState(false);
-  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
-  const [confirmationAction, setConfirmationAction] = useState<{ paymentId: string, studentId: string, amount: number } | null>(null);
-  const [selectedModality, setSelectedModality] = useState<string | null>(null);
-
-  const showMessage = (text: string, type: 'success' | 'error') => {
+  // --- Helpers de UI ---
+  const showMessage = (text: string, type: 'success' | 'error' | 'info') => {
     setMessage({ text, type });
     setTimeout(() => setMessage(null), 5000);
   };
 
+  // --- Actions (Tratamento de Erros Reforçado) ---
+  
   const handleRefresh = async () => {
-    setLoading(true);
+    // Não ativamos o loading global aqui para evitar conflito visual se chamado dentro de outra ação
     try {
       const [newStats, newSeg] = await refreshAction();
-      if (newStats) setStats(newStats);
-      if (newSeg) setSegmentation(newSeg);
-    } catch (e) {
-      showMessage("Erro ao atualizar dados.", 'error');
+      setStats(newStats);
+      setSegmentation(newSeg);
+    } catch (e) { 
+      console.error(e);
+      showMessage("Erro ao atualizar dados do painel.", 'error'); 
     }
-    setLoading(false);
   };
 
   const handleRegister = async (data: NewStudentData) => {
+    // Validação básica antes de enviar
+    if (!data.nome || !data.whatsapp || isNaN(data.mensalidade) || !data.data_vencimento) {
+        showMessage("Por favor, preencha todos os campos obrigatórios corretamente.", 'error');
+        return;
+    }
+
     setLoading(true);
     try {
       const res = await registerAction(data);
+      
       if (res.success) {
         showMessage(res.message, 'success');
-        setIsRegistrationModalOpen(false);
-        handleRefresh();
+        setIsRegistrationModalOpen(false); // Fecha o modal apenas se sucesso
+        await handleRefresh(); // Atualiza os dados
       } else {
-        showMessage(res.message, 'error');
+        // Se a ação retornou erro (ex: validação do banco)
+        showMessage(res.message || "Erro desconhecido ao salvar.", 'error');
       }
     } catch (e) {
-      showMessage("Erro ao registrar aluno.", 'error');
+      console.error("Erro no registro:", e);
+      showMessage("Erro de comunicação. Verifique sua conexão ou tente novamente.", 'error');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const confirmPayment = async () => {
     if (!confirmationAction) return;
     setLoading(true);
     try {
-      const res = await approveAction(confirmationAction.paymentId, confirmationAction.studentId, confirmationAction.amount);
-      if (res.success) { 
-        showMessage(res.message, 'success'); 
-        handleRefresh(); 
-      } else { 
-        showMessage(res.message, 'error'); 
-      }
+        const res = await approveAction(confirmationAction.paymentId, confirmationAction.studentId, confirmationAction.amount);
+        if (res.success) { 
+            showMessage('Pagamento APROVADO!', 'success'); 
+            setIsConfirmationModalOpen(false);
+            await handleRefresh(); 
+        } else { 
+            showMessage(res.message, 'error'); 
+        }
     } catch (e) {
-      showMessage("Erro ao aprovar pagamento.", 'error');
+        console.error("Erro na aprovação:", e);
+        showMessage("Erro ao processar aprovação.", 'error');
+    } finally {
+        setLoading(false);
     }
-    setIsConfirmationModalOpen(false);
-    setLoading(false);
   };
 
-  // Cálculo dos dados do gráfico com verificação explícita de nulidade
+  // --- Lógica do Gráfico ---
   const chartData = useMemo(() => {
-    // PROTEÇÃO CRÍTICA: Se segmentation for nulo/undefined, retorna objeto vazio seguro
-    if (!segmentation) {
-      return {
-        title: 'Carregando...',
-        labels: [],
-        data: [],
-        colors: [],
-        isRev: true
-      };
-    }
-
-    // Acessa propriedades com fallback para evitar erros de leitura
-    const counts = segmentation.modalityFrequencyCounts || {};
-    const revs = segmentation.modalityRevenueCounts || {};
+    const counts = segmentation?.modalityFrequencyCounts || {};
+    const revs = segmentation?.modalityRevenueCounts || {};
 
     if (selectedModality && counts[selectedModality]) {
       const modData = counts[selectedModality];
-      const freqs = Object.keys(modData).filter(k => k !== 'total');
+      const freqs = Object.keys(modData).filter(k => k !== 'total').sort();
       return { 
-        title: `Alunos: ${selectedModality}`,
+        title: `Distribuição em ${selectedModality} (Contagem de Alunos)`,
         labels: freqs.map(f => `${f} Semana`),
         data: freqs.map(f => (modData as any)[f].total),
         colors: freqs.map((_, i) => FREQUENCY_COLORS[i % FREQUENCY_COLORS.length]),
-        isRev: false
+        isRevenueMode: false
       };
     } else {
       const mods = Object.keys(revs);
       return {
-        title: 'Faturamento por Modalidade',
+        title: 'Faturamento Potencial por Modalidade',
         labels: mods,
         data: mods.map(m => revs[m]),
         colors: mods.map(m => MODALITY_COLORS[m] || MODALITY_COLORS['Não Informado']),
-        isRev: true
+        isRevenueMode: true
       };
     }
   }, [selectedModality, segmentation]);
 
+  const monthlyMissing = (stats?.monthlyExpected || 0) - (stats?.monthlyReceived || 0);
+
+  // =================================================================
+  // RENDERIZAÇÃO
+  // =================================================================
   return (
-    <div className="max-w-4xl mx-auto p-6 bg-white rounded-2xl shadow-xl font-['Quicksand']">
-      <header className="flex justify-between items-center mb-8 border-b pb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-[#232F34]">Painel Financeiro</h1>
-          <p className="text-sm text-gray-500 mt-1">Unidade: <span className="font-semibold text-[#FF9800]">{tenantName}</span></p>
-        </div>
-        <button onClick={() => setIsRegistrationModalOpen(true)} className="bg-[#FF9800] text-white px-4 py-2 rounded-lg hover:bg-[#E68900] shadow-md transition">
-          Novo Aluno
-        </button>
-      </header>
+    <>
+      <style jsx global>{`
+        body { font-family: 'Inter', sans-serif; background-color: #f7f9fb; }
+        .custom-scroll::-webkit-scrollbar { width: 8px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background-color: #9ca3af; border-radius: 10px; }
+        .modality-item { cursor: pointer; transition: all 0.2s; border-left: 4px solid transparent; border-radius: 8px; }
+        .modality-item:hover { background-color: #f3f4f6; border-left: 4px solid #d1d5db; }
+        .modality-item.active { background-color: #e0f2fe; border-left: 4px solid #3b82f6; box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1); font-weight: 600; }
+      `}</style>
 
-      {message && <div className={`p-3 rounded mb-4 text-center font-medium ${message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{message.text}</div>}
-      
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-        <KpiCard title="Faturamento Anual" value={loading ? '...' : formatCurrency(stats?.annualRevenue || 0)} color="border-[#232F34]" />
-        <KpiCard title="Previsão Mês" value={loading ? '...' : formatCurrency(stats?.nextMonthForecast || 0)} color="border-[#FF9800]" />
-        <KpiCard title="Alunos Ativos" value={loading ? '...' : (stats?.totalStudents || 0).toString()} color="border-[#4CAF50]" />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-        {/* Lista de Modalidades */}
-        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-          <h3 className="font-bold text-lg mb-4 text-[#232F34]">Modalidades</h3>
-          {loading ? <p className="text-gray-400">Carregando...</p> : 
-           !segmentation?.modalityFrequencyCounts || Object.keys(segmentation.modalityFrequencyCounts).length === 0 ? <p>Sem dados.</p> : 
-           Object.keys(segmentation.modalityFrequencyCounts).map(mod => (
-             <div key={mod} onClick={() => setSelectedModality(selectedModality === mod ? null : mod)} 
-                  className={`p-3 mb-2 cursor-pointer rounded-lg transition-all border ${selectedModality === mod ? 'bg-white border-[#FF9800] shadow-sm' : 'bg-white border-transparent hover:border-gray-200'}`}>
-               <div className="flex justify-between font-semibold text-[#232F34]">
-                 <span>{mod}</span>
-                 <span className="text-[#FF9800]">{segmentation.modalityFrequencyCounts[mod].total} Alunos</span>
+      <div className="min-h-screen p-4 sm:p-8">
+        <div id="app" className="max-w-4xl mx-auto">
+          
+          <header className="mb-8 p-4 bg-white shadow-lg rounded-xl flex justify-between items-center">
+             <div>
+               <h1 className="text-3xl font-bold text-gray-800">Painel de Validação Financeira</h1>
+               <div className="text-sm text-gray-500 mt-1">
+                 <span id="user-id-display">Unidade: <span className="text-indigo-600 font-semibold">{tenantName}</span></span>
                </div>
              </div>
-          ))}
-          {selectedModality && <button onClick={() => setSelectedModality(null)} className="mt-2 text-sm text-gray-500 hover:text-[#FF9800]">Limpar filtro</button>}
-        </div>
+             <div className="flex gap-2">
+               <button onClick={() => setIsRegistrationModalOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg shadow-md transition text-sm font-medium">Novo Aluno</button>
+               <button onClick={() => { setLoading(true); handleRefresh().finally(() => setLoading(false)); }} className="bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 px-3 py-2 rounded-lg shadow-sm transition">↻</button>
+             </div>
+          </header>
 
-        {/* Gráfico */}
-        <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col">
-          <h3 className="font-bold text-center mb-4 text-[#232F34]">{chartData.title}</h3>
-          <div className="flex-1 relative min-h-[250px]">
-            <Doughnut 
-              data={{ 
-                labels: chartData.labels, 
-                datasets: [{ 
-                  data: chartData.data, 
-                  backgroundColor: chartData.colors,
-                  borderWidth: 0,
-                  hoverOffset: 10
-                }] 
-              }} 
-              options={{ 
-                maintainAspectRatio: false,
-                plugins: { 
-                  legend: { position: 'bottom', labels: { usePointStyle: true, font: { family: 'Quicksand' } } },
-                  tooltip: { 
-                    callbacks: { 
-                      label: (ctx) => {
-                        const labelStr = ctx.label ? `${ctx.label}: ` : '';
-                        const val = ctx.parsed;
-                        const suffix = chartData.isRev ? formatCurrency(val) : `${val} alunos`;
-                        return labelStr + suffix;
-                      }
-                    }
-                  }
-                }
-              }} 
-            />
-          </div>
+          {loading && (
+            <div id="loading-indicator" className="text-center p-8">
+              <svg className="animate-spin h-8 w-8 text-indigo-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <p className="mt-2 text-indigo-600">Processando...</p>
+            </div>
+          )}
+
+          {message && (
+             <div id="message-box" className={`p-4 mb-4 text-sm rounded-lg ${
+                message.type === 'success' ? 'bg-green-100 text-green-800' : 
+                message.type === 'error' ? 'bg-red-100 text-red-800' : 
+                'bg-blue-100 text-blue-800'
+             }`} role="alert">
+                {message.text}
+             </div>
+          )}
+
+          <section id="statistics-section" className="mb-12">
+              <h2 className="text-2xl font-semibold mb-4 text-gray-700">Visão Geral e Estatísticas</h2>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+                  <div className="bg-white p-5 rounded-xl shadow-lg border-l-4 border-indigo-500">
+                      <p className="text-sm font-medium text-gray-500">Faturamento Anual (Acum.)</p>
+                      <p id="annual-revenue" className="text-2xl font-bold text-indigo-700 mt-1">{formatCurrency(stats?.annualRevenue || 0)}</p>
+                  </div>
+                  <div className="bg-white p-5 rounded-xl shadow-lg border-l-4 border-purple-500">
+                      <p className="text-sm font-medium text-gray-500">Previsão Próximo Mês</p>
+                      <p id="next-month-forecast" className="text-2xl font-bold text-purple-700 mt-1">{formatCurrency(stats?.nextMonthForecast || 0)}</p>
+                  </div>
+                  <div className="bg-white p-5 rounded-xl shadow-lg border-l-4 border-green-500">
+                      <p className="text-sm font-medium text-gray-500">Total de Alunos Ativos</p>
+                      <p id="total-students" className="text-2xl font-bold text-green-700 mt-1">{stats?.totalStudents || 0}</p>
+                  </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-xl shadow-lg mb-8">
+                  <h3 className="text-xl font-semibold mb-3 text-gray-700">Status Mensal (Este Mês)</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
+                      <div className="p-3 bg-blue-50 rounded-lg">
+                          <p className="text-xs text-gray-500">Esperado (Vencimentos)</p>
+                          <p id="monthly-expected" className="text-xl font-bold text-blue-700 mt-1">{formatCurrency(stats?.monthlyExpected || 0)}</p>
+                      </div>
+                      <div className="p-3 bg-green-50 rounded-lg">
+                          <p className="text-xs text-gray-500">Recebido (Aprovado)</p>
+                          <p id="monthly-received" className="text-xl font-bold text-green-700 mt-1">{formatCurrency(stats?.monthlyReceived || 0)}</p>
+                      </div>
+                      <div className="p-3 bg-red-50 rounded-lg">
+                          <p className="text-xs text-gray-500">Em Falta (Previsto - Recebido)</p>
+                          <p id="monthly-missing" className="text-xl font-bold text-red-700 mt-1">{formatCurrency(Math.max(0, monthlyMissing))}</p>
+                      </div>
+                  </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-xl shadow-lg">
+                  <h3 className="text-xl font-semibold mb-3 text-gray-700">Segmentação de Alunos Ativos</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+                      <div className="order-2 md:order-1">
+                          <h4 className="font-medium text-gray-600 mb-2 border-b pb-1">Detalhe Hierárquico</h4>
+                          <div id="stats-modality-frequency" className="space-y-3 text-sm text-gray-700">
+                            {(!segmentation?.modalityFrequencyCounts || Object.keys(segmentation.modalityFrequencyCounts).length === 0) ? (
+                                <p className="text-gray-400 italic p-2">Sem dados disponíveis.</p>
+                            ) : (
+                              Object.keys(segmentation.modalityFrequencyCounts).map(mod => {
+                                const modData = segmentation.modalityFrequencyCounts[mod];
+                                const freqs = Object.keys(modData).filter(k => k !== 'total').sort();
+                                const isActive = selectedModality === mod;
+                                return (
+                                  <div key={mod} onClick={() => setSelectedModality(isActive ? null : mod)} className={`border-b border-gray-200 pb-2 mb-3 px-2 py-1 modality-item ${isActive ? 'active' : ''}`}>
+                                    <p className="text-base font-bold text-indigo-700">{mod} (Total: {modData.total} Alunos)</p>
+                                    <ul className="ml-4 mt-1 space-y-1 text-gray-700">
+                                      {freqs.map(freq => (
+                                        <li key={freq}>
+                                          <span className="text-sm font-medium">-{'>'} {freq} Semana:</span> {(modData as any)[freq].total} alunos
+                                          <span className="text-xs text-gray-500 ml-2">(masc {(modData as any)[freq].masc || 0}, fem {(modData as any)[freq].fem || 0})</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )
+                              })
+                            )}
+                          </div>
+                          <button onClick={() => setSelectedModality(null)} className={`mt-4 text-sm px-3 py-1 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition ${!selectedModality ? 'hidden' : ''}`}>Mostrar Gráfico de Faturamento</button>
+                      </div>
+
+                      <div className="order-1 md:order-2">
+                          <h4 id="chart-title" className="font-medium text-gray-600 mb-2 border-b pb-1 text-center">{chartData.title}</h4>
+                          <div className="relative mx-auto max-h-[350px]">
+                            <Doughnut 
+                              data={{ labels: chartData.labels, datasets: [{ data: chartData.data, backgroundColor: chartData.colors, borderWidth: chartData.isRevenueMode ? 2 : 1, hoverOffset: 8 }] }} 
+                              options={{ maintainAspectRatio: false, responsive: true, plugins: { legend: { position: 'bottom', labels: { font: { size: 12, family: "'Inter', sans-serif" } } }, tooltip: { callbacks: { label: (ctx) => (ctx.label ? `${ctx.label}: ` : '') + (chartData.isRevenueMode ? formatCurrency(ctx.parsed) : `${ctx.parsed} alunos`) } } } }} 
+                            />
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          </section>
+
+          <main id="payment-list-container">
+              <h2 className="text-2xl font-semibold mb-4 text-gray-700">Pagamentos Pendentes</h2>
+              <div id="pending-payments-list" className="space-y-4 custom-scroll max-h-[70vh] overflow-y-auto p-1">
+                 {(!stats?.pendingPayments || stats.pendingPayments.length === 0) ? (
+                    <div id="no-payments" className="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded-lg mt-8">
+                        <p className="font-bold">Tudo Certo!</p>
+                        <p>Não há pagamentos pendentes de validação no momento.</p>
+                    </div>
+                 ) : (
+                   stats.pendingPayments.map(payment => (
+                     <div key={payment.id} className="bg-white p-5 shadow-md rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center transition duration-300 hover:shadow-lg">
+                        <div className="flex-1 min-w-0 mb-4 sm:mb-0">
+                           <p className="text-lg font-semibold text-gray-800 truncate">{payment.nome_aluno}</p>
+                           <p className="text-sm text-gray-500">WhatsApp: {payment.student_id}</p>
+                           <p className="text-sm text-gray-600">Data do Pagamento: {new Date(payment.data_pagamento).toLocaleDateString('pt-BR')}</p>
+                           <p className="text-xl font-bold text-indigo-600 mt-1">{formatCurrency(payment.valor)}</p>
+                        </div>
+                        <div className="flex items-center space-x-3 w-full sm:w-auto">
+                            <button className="text-indigo-600 hover:text-indigo-800 text-sm font-medium border border-indigo-200 bg-indigo-50 p-2 rounded-lg transition duration-150 whitespace-nowrap">Ver Comprovativo</button>
+                            <button onClick={() => { setConfirmationAction({ paymentId: payment.id, studentId: payment.student_id, amount: payment.valor }); setIsConfirmationModalOpen(true); }} className="action-btn bg-green-500 hover:bg-green-600 text-white font-medium py-2 px-4 rounded-lg shadow-md transition duration-150 whitespace-nowrap">Aprovar</button>
+                            <button onClick={() => showMessage("Rejeição não implementada.", 'info')} className="action-btn bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-4 rounded-lg shadow-md transition duration-150 whitespace-nowrap">Rejeitar</button>
+                        </div>
+                     </div>
+                   ))
+                 )}
+              </div>
+          </main>
+
+          {isConfirmationModalOpen && confirmationAction && (
+             <div id="confirmation-modal" className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 transform transition-all">
+                     <h3 id="modal-title" className="text-xl font-bold text-gray-800 mb-4">Aprovar Pagamento</h3>
+                     <p id="modal-text" className="text-gray-600 mb-6">Confirma a aprovação do pagamento de <span className="font-bold">{formatCurrency(confirmationAction.amount)}</span>?</p>
+                     <div id="modal-actions" className="flex justify-end space-x-3">
+                         <button id="modal-cancel" onClick={() => setIsConfirmationModalOpen(false)} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition duration-150">Cancelar</button>
+                         <button id="modal-confirm" onClick={confirmPayment} className="px-4 py-2 bg-green-500 text-white rounded-lg hover:opacity-90 transition duration-150">Confirmar Aprovação</button>
+                     </div>
+                 </div>
+             </div>
+          )}
+
+          {isRegistrationModalOpen && (
+             <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
+                 <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+                     <h2 className="text-xl font-bold text-gray-800 mb-4">Novo Aluno</h2>
+                     <form onSubmit={(e) => {
+                        e.preventDefault();
+                        const fd = new FormData(e.currentTarget);
+                        handleRegister({
+                          nome: fd.get('nome') as string,
+                          whatsapp: fd.get('whatsapp') as string,
+                          data_vencimento: fd.get('data_vencimento') as string,
+                          mensalidade: parseFloat(fd.get('mensalidade') as string),
+                          modalidade: fd.get('modalidade') as string,
+                          classes_per_week: fd.get('freq') as string,
+                          gender: fd.get('gender') as any
+                        });
+                      }}>
+                        <div className="space-y-3">
+                            <input name="nome" placeholder="Nome Completo" required className="w-full p-2 border border-gray-300 rounded" />
+                            <input name="whatsapp" placeholder="WhatsApp" required className="w-full p-2 border border-gray-300 rounded" />
+                            <div className="flex gap-2">
+                                <input name="mensalidade" type="number" placeholder="Mensalidade" required className="w-full p-2 border border-gray-300 rounded" />
+                                <input name="data_vencimento" type="date" required className="w-full p-2 border border-gray-300 rounded" />
+                            </div>
+                            <select name="modalidade" className="w-full p-2 border border-gray-300 rounded">
+                                {Object.keys(MODALITY_COLORS).map(m => <option key={m} value={m}>{m}</option>)}
+                            </select>
+                            <div className="flex gap-2">
+                                <select name="freq" className="w-1/2 p-2 border border-gray-300 rounded"><option value="3x">3x</option><option value="5x">5x</option><option value="Livre">Livre</option></select>
+                                <select name="gender" className="w-1/2 p-2 border border-gray-300 rounded"><option value="Masculino">Masculino</option><option value="Feminino">Feminino</option></select>
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-2 mt-4">
+                            <button type="button" onClick={() => setIsRegistrationModalOpen(false)} className="px-4 py-2 bg-gray-200 rounded text-gray-700">Cancelar</button>
+                            <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded">Salvar</button>
+                        </div>
+                      </form>
+                 </div>
+             </div>
+          )}
+
         </div>
       </div>
-
-      {/* Tabela de Pagamentos */}
-      <h2 className="text-xl font-bold mb-4 text-[#232F34]">Pagamentos Pendentes</h2>
-      {loading ? <p>Verificando pagamentos...</p> : !stats?.pendingPayments || stats.pendingPayments.length === 0 ? (
-        <div className="p-4 bg-green-50 text-green-700 rounded-lg border border-green-100 flex items-center">
-          <span className="mr-2">✓</span> Todos os pagamentos em dia.
-        </div>
-      ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-[#232F34] text-white">
-              <tr>
-                <th className="p-3">Aluno</th>
-                <th className="p-3">Valor</th>
-                <th className="p-3">Data</th>
-                <th className="p-3 text-right">Ação</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.pendingPayments.map(p => (
-                <tr key={p.id} className="border-b hover:bg-gray-50 last:border-0">
-                  <td className="p-3 font-medium">{p.nome_aluno}</td>
-                  <td className="p-3 font-bold text-[#FF9800]">{formatCurrency(p.valor)}</td>
-                  <td className="p-3 text-gray-500">{new Date(p.data_pagamento).toLocaleDateString('pt-BR')}</td>
-                  <td className="p-3 text-right">
-                    <button 
-                      onClick={() => { setConfirmationAction({ paymentId: p.id, studentId: p.student_id, amount: p.valor }); setIsConfirmationModalOpen(true); }} 
-                      className="bg-blue-50 text-blue-600 px-3 py-1 rounded hover:bg-blue-100 font-medium transition"
-                    >
-                      Aprovar
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Modal Cadastro */}
-      {isRegistrationModalOpen && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200">
-            <h2 className="text-2xl font-bold mb-6 text-[#232F34]">Novo Aluno</h2>
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              const fd = new FormData(e.currentTarget);
-              handleRegister({
-                nome: fd.get('nome') as string,
-                whatsapp: fd.get('whatsapp') as string,
-                data_vencimento: fd.get('data_vencimento') as string,
-                mensalidade: parseFloat(fd.get('mensalidade') as string),
-                modalidade: fd.get('modalidade') as string,
-                classes_per_week: fd.get('freq') as string,
-                gender: fd.get('gender') as any
-              });
-            }}>
-              <div className="space-y-3">
-                <input name="nome" placeholder="Nome Completo" required className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FF9800] outline-none" />
-                <input name="whatsapp" placeholder="WhatsApp (55...)" required className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FF9800] outline-none" />
-                <div className="flex gap-3">
-                  <div className="w-1/2">
-                    <label className="text-xs text-gray-500 ml-1">Vencimento</label>
-                    <input name="data_vencimento" type="date" required className="w-full p-3 border border-gray-200 rounded-lg outline-none" defaultValue={new Date().toISOString().split('T')[0]} />
-                  </div>
-                  <div className="w-1/2">
-                    <label className="text-xs text-gray-500 ml-1">Valor (R$)</label>
-                    <input name="mensalidade" type="number" step="0.01" placeholder="0,00" required className="w-full p-3 border border-gray-200 rounded-lg outline-none" />
-                  </div>
-                </div>
-                <select name="modalidade" className="w-full p-3 border border-gray-200 rounded-lg bg-white outline-none">
-                  <option value="Jiu-Jitsu">Jiu-Jitsu</option>
-                  <option value="Crossfit">Crossfit</option>
-                  <option value="Musculação">Musculação</option>
-                  <option value="Yoga">Yoga</option>
-                </select>
-                <div className="flex gap-3">
-                  <select name="freq" className="w-1/2 p-3 border border-gray-200 rounded-lg bg-white outline-none">
-                    <option value="2x">2x Semana</option>
-                    <option value="3x">3x Semana</option>
-                    <option value="5x">5x Semana</option>
-                    <option value="Livre">Livre</option>
-                  </select>
-                  <select name="gender" className="w-1/2 p-3 border border-gray-200 rounded-lg bg-white outline-none">
-                    <option value="Masculino">Masculino</option>
-                    <option value="Feminino">Feminino</option>
-                  </select>
-                </div>
-              </div>
-              <div className="flex justify-end gap-3 mt-6">
-                <button type="button" onClick={() => setIsRegistrationModalOpen(false)} className="px-5 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition">Cancelar</button>
-                <button type="submit" className="px-5 py-2 bg-[#FF9800] text-white rounded-lg hover:bg-[#E68900] shadow-lg shadow-orange-200 transition">Salvar Aluno</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {isConfirmationModalOpen && confirmationAction && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm">
-            <h3 className="font-bold text-lg mb-2 text-[#232F34]">Confirmar Aprovação</h3>
-            <p className="text-gray-600 mb-6">Deseja confirmar o recebimento de <span className="font-bold text-[#FF9800]">{formatCurrency(confirmationAction.amount)}</span>?</p>
-            <div className="flex justify-end gap-3">
-              <button onClick={() => setIsConfirmationModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition">Não</button>
-              <button onClick={confirmPayment} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-lg shadow-green-200 transition">Sim, confirmar</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+    </>
   );
 }
-
-const KpiCard = ({ title, value, color }: { title: string, value: string, color: string }) => (
-  <div className={`p-5 bg-white shadow-sm rounded-xl border-l-4 ${color} border border-gray-100`}>
-    <p className="text-gray-500 text-sm font-medium uppercase tracking-wide">{title}</p>
-    <p className="text-2xl font-bold text-[#232F34] mt-1">{value}</p>
-  </div>
-);
