@@ -24,3 +24,11 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Forçar a fonte em elementos de formulário que não herdam por padrão */
+input,
+textarea,
+select,
+button {
+  font-family: var(--font-geist-sans), sans-serif;
+}

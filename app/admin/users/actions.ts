@@ -3,6 +3,7 @@
 import { createClient } from '@supabase/supabase-js'
 import { redirect } from 'next/navigation'
 import { revalidatePath } from 'next/cache'
+import { isSuperAdmin } from '../../utils/supabase/server'
 
 // Usamos a chave SERVICE_ROLE para ter poder total
 const supabaseAdmin = createClient(
@@ -12,6 +13,10 @@ const supabaseAdmin = createClient(
 )
 
 export async function getUsers() {
+  const isAdmin = await isSuperAdmin();
+  if (!isAdmin) {
+    return { data: [], error: { message: "Acesso não autorizado." } };
+  }
   const { data: { users }, error } = await supabaseAdmin.auth.admin.listUsers()
   if (error) {
     console.error('Erro ao buscar usuários:', error)
@@ -21,6 +26,10 @@ export async function getUsers() {
 }
 
 export async function getUserById(userId: string) {
+  const isAdmin = await isSuperAdmin();
+  if (!isAdmin) {
+    return { data: null, error: { message: "Acesso não autorizado." } };
+  }
   const { data: { user }, error } = await supabaseAdmin.auth.admin.getUserById(userId)
   if (error) {
     console.error('Erro ao buscar usuário:', error)
@@ -30,9 +39,25 @@ export async function getUserById(userId: string) {
 }
 
 export async function updateUser(userId: string, formData: FormData) {
+  const isAdmin = await isSuperAdmin();
+  if (!isAdmin) {
+    throw new Error("Acesso não autorizado.");
+  }
+
   const email = formData.get('email') as string
   const fullName = formData.get('fullName') as string
   const password = formData.get('password') as string
+
+  // Validação de dados
+  if (!fullName || !/^([a-zA-Zà-úÀ-Ú]+)\s+([a-zA-Zà-úÀ-Ú\s]+)$/.test(fullName)) {
+    throw new Error("Nome completo inválido.");
+  }
+  if (!email || !/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(email)) {
+    throw new Error("E-mail inválido.");
+  }
+  if (password && !/.{6,}/.test(password)) { // Password is optional
+    throw new Error("Senha inválida. Mínimo 6 caracteres.");
+  }
 
   const userUpdateData: any = {
     email,
@@ -55,6 +80,10 @@ export async function updateUser(userId: string, formData: FormData) {
 }
 
 export async function deleteUser(userId: string) {
+  const isAdmin = await isSuperAdmin();
+  if (!isAdmin) {
+    throw new Error("Acesso não autorizado.");
+  }
   // Primeiro, remova as associações do usuário em `tenant_members`
   const { error: deleteMembersError } = await supabaseAdmin
     .from('tenant_members')
@@ -79,3 +108,4 @@ export async function deleteUser(userId: string) {
   revalidatePath('/admin/users')
   redirect('/admin/users?success=Usuário excluído com sucesso!')
 }
+

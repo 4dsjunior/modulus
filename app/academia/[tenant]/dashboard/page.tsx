@@ -305,32 +305,54 @@ export default function DashboardClient({
               });
             }}>
               <div className="space-y-3">
-                <input name="nome" placeholder="Nome Completo" required className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FF9800] outline-none" />
-                <input name="whatsapp" placeholder="WhatsApp (55...)" required className="w-full p-3 border border-gray-200 rounded-lg focus:ring-2 focus:ring-[#FF9800] outline-none" />
+                <input name="nome" placeholder="Nome Completo" required 
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-[#FF9800] outline-none
+                             bg-white text-slate-900 border-slate-300 placeholder:text-slate-500 placeholder:opacity-100" 
+                />
+                <input name="whatsapp" placeholder="WhatsApp (55...)" required 
+                  className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-[#FF9800] outline-none
+                             bg-white text-slate-900 border-slate-300 placeholder:text-slate-500 placeholder:opacity-100" 
+                />
                 <div className="flex gap-3">
                   <div className="w-1/2">
                     <label className="text-xs text-gray-500 ml-1">Vencimento</label>
-                    <input name="data_vencimento" type="date" required className="w-full p-3 border border-gray-200 rounded-lg outline-none" defaultValue={new Date().toISOString().split('T')[0]} />
+                    <input name="data_vencimento" type="date" required 
+                      className="w-full p-3 border rounded-lg outline-none
+                                 bg-white text-slate-900 border-slate-300" 
+                      defaultValue={new Date().toISOString().split('T')[0]} 
+                    />
                   </div>
                   <div className="w-1/2">
                     <label className="text-xs text-gray-500 ml-1">Valor (R$)</label>
-                    <input name="mensalidade" type="number" step="0.01" placeholder="0,00" required className="w-full p-3 border border-gray-200 rounded-lg outline-none" />
+                    <input name="mensalidade" type="number" step="0.01" placeholder="0,00" required 
+                      className="w-full p-3 border rounded-lg outline-none
+                                 bg-white text-slate-900 border-slate-300 placeholder:text-slate-500 placeholder:opacity-100" 
+                    />
                   </div>
                 </div>
-                <select name="modalidade" className="w-full p-3 border border-gray-200 rounded-lg bg-white outline-none">
+                <select name="modalidade" 
+                  className="w-full p-3 border rounded-lg bg-white outline-none
+                             bg-white text-slate-900 border-slate-300"
+                >
                   <option value="Jiu-Jitsu">Jiu-Jitsu</option>
                   <option value="Crossfit">Crossfit</option>
                   <option value="Musculação">Musculação</option>
                   <option value="Yoga">Yoga</option>
                 </select>
                 <div className="flex gap-3">
-                  <select name="freq" className="w-1/2 p-3 border border-gray-200 rounded-lg bg-white outline-none">
+                  <select name="freq" 
+                    className="w-1/2 p-3 border rounded-lg bg-white outline-none
+                               bg-white text-slate-900 border-slate-300"
+                  >
                     <option value="2x">2x Semana</option>
                     <option value="3x">3x Semana</option>
                     <option value="5x">5x Semana</option>
                     <option value="Livre">Livre</option>
                   </select>
-                  <select name="gender" className="w-1/2 p-3 border border-gray-200 rounded-lg bg-white outline-none">
+                  <select name="gender" 
+                    className="w-1/2 p-3 border rounded-lg bg-white outline-none
+                               bg-white text-slate-900 border-slate-300"
+                  >
                     <option value="Masculino">Masculino</option>
                     <option value="Feminino">Feminino</option>
                   </select>
