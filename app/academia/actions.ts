@@ -1,6 +1,7 @@
-import 'server-only';
+'use server';
+
 import { createClient } from '@/app/utils/supabase/server';
-import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 
 // =================================================================
 // DEFINIÇÕES DE TIPOS
@@ -38,8 +39,6 @@ export interface SegmentationCounts {
     modalityFrequencyCounts: { 
         [modality: string]: { 
             total: number; 
-            // CORREÇÃO: Adicionado '| number' para permitir que a propriedade 'total'
-            // (que é um número) coexista com as chaves de frequência (que são objetos)
             [frequency: string]: { masc: number; fem: number; total: number } | number;
         } 
     };
@@ -56,8 +55,19 @@ async function getTenantId(): Promise<string | null> {
 
   if (!user) return null;
   
-  const tenants = user.app_metadata.tenants as string[] | undefined;
-  if (tenants && tenants.length > 0) return tenants[0];
+  // 1. Tenta pegar dos metadados (mais rápido)
+  const tenantsMetadata = user.app_metadata.tenants as string[] | undefined;
+  if (tenantsMetadata && tenantsMetadata.length > 0) return tenantsMetadata[0];
+
+  // 2. Fallback: Busca na tabela tenant_members
+  const { data: member } = await supabase
+    .from('tenant_members')
+    .select('tenant_id')
+    .eq('user_id', user.id)
+    .single();
+
+  if (member) return member.tenant_id;
+
   return null;
 }
 
@@ -66,8 +76,15 @@ async function getTenantId(): Promise<string | null> {
 // =================================================================
 
 export async function registerNewStudent(data: NewStudentData) {
+  console.log("SERVER ACTION: Iniciando registro de aluno...", data); // DEBUG LOG
+  
   const tenantId = await getTenantId();
-  if (!tenantId) return { success: false, message: 'Academia não encontrada.' };
+  console.log("SERVER ACTION: Tenant ID encontrado:", tenantId); // DEBUG LOG
+
+  if (!tenantId) {
+    console.error("SERVER ACTION ERRO: Tenant ID não encontrado para o usuário.");
+    return { success: false, message: 'Erro de permissão: Academia não identificada.' };
+  }
 
   const supabase = await createClient();
 
@@ -84,10 +101,17 @@ export async function registerNewStudent(data: NewStudentData) {
       status: 'active',
     });
 
-    if (error) throw error;
+    if (error) {
+      console.error("SERVER ACTION ERRO SUPABASE:", error); // DEBUG LOG
+      throw error;
+    }
+    
+    console.log("SERVER ACTION: Sucesso! Revalidando caminho...");
+    revalidatePath(`/academia/${tenantId}/dashboard`);
     return { success: true, message: 'Aluno cadastrado com sucesso.' };
   } catch (e: any) {
-    return { success: false, message: `Erro: ${e.message}` };
+    console.error("SERVER ACTION EXCEPTION:", e);
+    return { success: false, message: `Erro ao salvar no banco: ${e.message}` };
   }
 }
 
@@ -123,6 +147,7 @@ export async function approvePayment(paymentId: string, studentId: string, amoun
 
     if (updateError) throw updateError;
 
+    revalidatePath(`/academia/${tenantId}/dashboard`);
     return { success: true, message: 'Pagamento aprovado e vencimento atualizado.' };
   } catch (e) {
     return { success: false, message: 'Erro ao processar aprovação.' };
@@ -142,7 +167,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
   const currentYear = now.getFullYear();
   
-  // Usamos 'any[]' para evitar conflitos de tipagem do Supabase com Promise.all
   const promises: any[] = [];
 
   // P1: Alunos Ativos
@@ -164,7 +188,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const monthlyReceivedData = results[2].data || [];
   const annualRevenueData = results[3].data || [];
 
-  // Cálculos
   const totalStudents = studentsData.length;
   const nextMonthForecast = studentsData.reduce((sum: number, s: any) => sum + (s.mensalidade || 0), 0);
   const monthlyReceived = monthlyReceivedData.reduce((sum: number, p: any) => sum + (p.valor || 0), 0);
@@ -211,7 +234,6 @@ export async function getSegmentationData(): Promise<SegmentationCounts> {
     
     const modEntry = modalityFrequencyCounts[mod];
     
-    // Casting seguro para evitar erro 2411
     if (!(modEntry as any)[freq]) {
       (modEntry as any)[freq] = { masc: 0, fem: 0, total: 0 };
     }

@@ -1,563 +1,365 @@
 'use client';
 
-import React, { useEffect, useState, useRef } from 'react';
-import Chart from 'chart.js/auto';
+import { useState, useMemo, useEffect } from 'react';
+import { Doughnut } from 'react-chartjs-2';
+import 'chart.js/auto';
 
-// --- MOCK DATA ---
-const MOCK_STUDENTS = [
-    // Alunos de Jiu-Jitsu (Total: 5)
-    { name: "João Silva", whatsapp: "5511988881111", due_date: "2025-11-15", status: "active", modality: "Jiu-Jitsu", gender: "Masculino", classes_per_week: "3x", monthly_fee: 120.00 },
-    { name: "Julia Santos", whatsapp: "5511988886666", due_date: "2025-12-15", status: "active", modality: "Jiu-Jitsu", gender: "Feminino", classes_per_week: "3x", monthly_fee: 120.00 },
-    { name: "Pedro Lima", whatsapp: "5511988883333", due_date: "2025-12-05", status: "active", modality: "Jiu-Jitsu", gender: "Masculino", classes_per_week: "5x", monthly_fee: 120.00 },
-    { name: "Gustavo Mendes", whatsapp: "5511988889999", due_date: "2025-11-01", status: "active", modality: "Jiu-Jitsu", gender: "Masculino", classes_per_week: "5x", monthly_fee: 120.00 },
-    { name: "Mariana Alves", whatsapp: "5511988880000", due_date: "2025-12-02", status: "active", modality: "Jiu-Jitsu", gender: "Feminino", classes_per_week: "5x", monthly_fee: 120.00 },
-    
-    // Alunos de Crossfit (Total: 3)
-    { name: "Maria Souza", whatsapp: "5511988882222", due_date: "2025-11-28", status: "active", modality: "Crossfit", gender: "Feminino", classes_per_week: "5x", monthly_fee: 150.00 },
-    { name: "Rafael Costa", whatsapp: "5511988887777", due_date: "2025-12-20", status: "active", modality: "Crossfit", gender: "Masculino", classes_per_week: "5x", monthly_fee: 150.00 },
-    { name: "Carlos Rocha", whatsapp: "5511988885555", due_date: "2025-11-01", status: "active", modality: "Crossfit", gender: "Masculino", classes_per_week: "3x", monthly_fee: 150.00 },
-    
-    // Alunos de Musculação (Total: 2)
-    { name: "Ana Paula", whatsapp: "5511988884444", due_date: "2025-12-10", status: "active", modality: "Musculação", gender: "Feminino", classes_per_week: "2x", monthly_fee: 90.00 },
-    { name: "Leticia Almeida", whatsapp: "5511988888888", due_date: "2025-12-25", status: "active", modality: "Musculação", gender: "Feminino", classes_per_week: "5x", monthly_fee: 90.00 },
-];
+import {
+  registerNewStudent,
+  approvePayment,
+  getDashboardStats,
+  getSegmentationData,
+  type DashboardStats,
+  type SegmentationCounts,
+  type NewStudentData
+} from '../../actions';
 
-const INITIAL_PENDING_PAYMENTS = [
-    { id: "P_MOCK_1", student_whatsapp: "5511988881111", amount: 120.00, proof_url: "https://placehold.co/400x300/e0e0e0/000?text=Comprovante+1", validation_status: "pending", payment_date: new Date(new Date().setDate(1)).toISOString() },
-    { id: "P_MOCK_2", student_whatsapp: "5511988884444", amount: 90.00, proof_url: "https://placehold.co/400x300/e0e0e0/000?text=Comprovante+2", validation_status: "pending", payment_date: new Date(new Date().setDate(2)).toISOString() },
-];
-
-const INITIAL_APPROVED_PAYMENTS = (() => {
-    const currentYear = new Date().getFullYear();
-    const currentMonth = new Date().getMonth();
-    return [
-        { amount: 120.00, validated_at: `${currentYear}-01-15T12:00:00Z` },
-        { amount: 150.00, validated_at: `${currentYear}-03-20T12:00:00Z` },
-        { amount: 150.00, validated_at: `${currentYear}-05-10T12:00:00Z` },
-        { amount: 120.00, validated_at: new Date(currentYear, currentMonth, 5).toISOString() },
-        { amount: 90.00, validated_at: new Date(currentYear, currentMonth, 10).toISOString() },
-    ];
-})();
+// =================================================================
+// CONFIGURAÇÕES VISUAIS
+// =================================================================
 
 const MODALITY_COLORS: Record<string, string> = {
-    'Jiu-Jitsu': 'rgb(255, 99, 132)',
-    'Crossfit': 'rgb(54, 162, 235)',
-    'Musculação': 'rgb(255, 205, 86)',
-    'Não Informado': 'rgb(201, 203, 207)'
+  'Jiu-Jitsu': '#FF5722',
+  'Crossfit': '#232F34',
+  'Musculação': '#FF9800',
+  'Yoga': '#6C757D',
+  'Não Informado': '#E0E0E0'
+};
+const FREQUENCY_COLORS = ['#FF9800', '#232F34', '#4CAF50', '#FF5722', '#6C757D'];
+
+const formatCurrency = (value: number) => {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 };
 
-const FREQUENCY_COLORS = [
-    'rgb(75, 192, 192)', 'rgb(153, 102, 255)', 'rgb(255, 159, 64)', 'rgb(50, 200, 50)', 'rgb(200, 50, 50)'
-];
-
-// --- HELPER FUNCTIONS ---
-function formatCurrency(value: number) {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+interface DashboardClientProps {
+  tenantName: string;
+  initialStats: DashboardStats;
+  initialSegmentation: SegmentationCounts;
 }
 
-export default function DashboardClient({ tenant }: { tenant: string }) {
-    // State
-    const [isLoading, setIsLoading] = useState(true);
-    const [students, setStudents] = useState(MOCK_STUDENTS);
-    const [pendingPayments, setPendingPayments] = useState(INITIAL_PENDING_PAYMENTS);
-    const [approvedPayments, setApprovedPayments] = useState(INITIAL_APPROVED_PAYMENTS);
-    const [message, setMessage] = useState<{ text: string, type: 'info' | 'success' | 'error' } | null>(null);
-    
-    // Modal State
-    const [modalConfig, setModalConfig] = useState<{
-        isOpen: boolean;
-        title: string;
-        text: string;
-        confirmText: string;
-        confirmClass: string;
-        onConfirm: () => void;
-    }>({
-        isOpen: false,
-        title: '',
-        text: '',
-        confirmText: '',
-        confirmClass: '',
-        onConfirm: () => {}
-    });
+export default function DashboardClient({ 
+  tenantName, 
+  initialStats, 
+  initialSegmentation
+}: DashboardClientProps) {
+  
+  const [stats, setStats] = useState<DashboardStats>(initialStats);
+  const [segmentation, setSegmentation] = useState<SegmentationCounts>(initialSegmentation);
+  
+  useEffect(() => {
+    if (initialStats) setStats(initialStats);
+    if (initialSegmentation) setSegmentation(initialSegmentation);
+  }, [initialStats, initialSegmentation]);
 
-    // Stats State
-    const [stats, setStats] = useState({
-        annualRevenue: 0,
-        nextMonthForecast: 0,
-        totalStudents: 0,
-        monthlyExpected: 0,
-        monthlyReceived: 0,
-        monthlyMissing: 0,
-    });
+  // Estados de UI
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  
+  // Estados de Modais
+  const [isRegistrationModalOpen, setIsRegistrationModalOpen] = useState(false);
+  const [isConfirmationModalOpen, setIsConfirmationModalOpen] = useState(false);
+  const [confirmationAction, setConfirmationAction] = useState<{ paymentId: string, studentId: string, amount: number } | null>(null);
+  const [selectedModality, setSelectedModality] = useState<string | null>(null);
 
-    const [modalityFrequencyCounts, setModalityFrequencyCounts] = useState<any>({});
-    const [modalityRevenueCounts, setModalityRevenueCounts] = useState<any>({});
-    const [selectedModality, setSelectedModality] = useState<string | null>(null);
+  const showMessage = (text: string, type: 'success' | 'error') => {
+    setMessage({ text, type });
+    // Auto-hide após 5 segundos
+    setTimeout(() => setMessage(null), 5000);
+  };
 
-    // Chart Ref
-    const chartRef = useRef<HTMLCanvasElement>(null);
-    const chartInstanceRef = useRef<Chart | null>(null);
+  const handleRefresh = async () => {
+    try {
+      const newStats = await getDashboardStats();
+      const newSeg = await getSegmentationData();
+      setStats(newStats);
+      setSegmentation(newSeg);
+    } catch (e) {
+      console.error(e);
+      showMessage("Erro ao atualizar dados.", 'error');
+    }
+  };
 
-    // --- EFFECTS ---
+  const handleRegister = async (data: NewStudentData) => {
+    // Validação básica no cliente
+    if (!data.nome || isNaN(data.mensalidade)) {
+        showMessage("Preencha nome e mensalidade corretamente.", 'error');
+        return;
+    }
 
-    // Initial Load
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            setIsLoading(false);
-            calculateStatistics();
-        }, 1000);
-        return () => clearTimeout(timer);
-    }, []);
+    setLoading(true);
+    console.log("Enviando dados para Server Action:", data); // Debug Cliente
 
-    // Recalculate stats when data changes
-    useEffect(() => {
-        if (!isLoading) {
-            calculateStatistics();
-        }
-    }, [students, approvedPayments, isLoading]);
+    try {
+      const res = await registerNewStudent(data);
+      console.log("Resposta do Server Action:", res); // Debug Cliente
+      
+      if (res.success) {
+        showMessage(res.message, 'success');
+        setIsRegistrationModalOpen(false); // Fecha o modal
+        await handleRefresh(); // Atualiza os dados na tela
+      } else {
+        // Se cair aqui, a mensagem aparecerá no topo da tela agora
+        showMessage(res.message, 'error');
+      }
+    } catch (e: any) {
+      console.error("Erro fatal no cliente:", e);
+      showMessage(`Erro de comunicação: ${e.message}`, 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    // Update Chart when stats change
-    useEffect(() => {
-        if (!isLoading && chartRef.current) {
-            if (selectedModality) {
-                renderFrequencyChart(selectedModality);
-            } else {
-                renderPrimaryModalityChart();
-            }
-        }
-    }, [modalityRevenueCounts, modalityFrequencyCounts, selectedModality, isLoading]);
+  const confirmPayment = async () => {
+    if (!confirmationAction) return;
+    setLoading(true);
+    try {
+      const res = await approvePayment(confirmationAction.paymentId, confirmationAction.studentId, confirmationAction.amount);
+      if (res.success) { 
+        showMessage(res.message, 'success'); 
+        await handleRefresh(); 
+      } else { 
+        showMessage(res.message, 'error'); 
+      }
+    } catch (e) {
+      showMessage("Erro ao aprovar pagamento.", 'error');
+    }
+    setIsConfirmationModalOpen(false);
+    setLoading(false);
+  };
 
+  const chartData = useMemo(() => {
+    if (!segmentation) return { title: 'Carregando...', labels: [], data: [], colors: [], isRev: true };
+    const counts = segmentation.modalityFrequencyCounts || {};
+    const revs = segmentation.modalityRevenueCounts || {};
 
-    // --- LOGIC ---
+    if (selectedModality && counts[selectedModality]) {
+      const modData = counts[selectedModality];
+      const freqs = Object.keys(modData).filter(k => k !== 'total');
+      return { 
+        title: `Alunos: ${selectedModality}`,
+        labels: freqs.map(f => `${f} Semana`),
+        data: freqs.map(f => (modData as any)[f].total),
+        colors: freqs.map((_, i) => FREQUENCY_COLORS[i % FREQUENCY_COLORS.length]),
+        isRev: false
+      };
+    } else {
+      const mods = Object.keys(revs);
+      return {
+        title: 'Faturamento por Modalidade',
+        labels: mods,
+        data: mods.map(m => revs[m]),
+        colors: mods.map(m => MODALITY_COLORS[m] || MODALITY_COLORS['Não Informado']),
+        isRev: true
+      };
+    }
+  }, [selectedModality, segmentation]);
 
-    const calculateStatistics = () => {
-        const now = new Date();
-        const currentYear = now.getFullYear();
-        const currentMonth = now.getMonth();
-        const startOfCurrentMonth = new Date(currentYear, currentMonth, 1);
-        const startOfNextMonth = new Date(currentYear, currentMonth + 1, 1);
-
-        let annualRev = 0;
-        let monthlyRec = 0;
-
-        approvedPayments.forEach(payment => {
-            const validatedDate = new Date(payment.validated_at);
-            if (validatedDate.getFullYear() === currentYear) {
-                annualRev += payment.amount;
-            }
-            if (validatedDate >= startOfCurrentMonth && validatedDate < startOfNextMonth) {
-                monthlyRec += payment.amount;
-            }
-        });
-
-        let totalStud = 0;
-        let monthlyExp = 0;
-        let nextMonthFore = 0;
-        
-        const modFreqCounts: any = {};
-        const modRevCounts: any = {};
-
-        students.forEach(student => {
-            const monthlyFee = student.monthly_fee || 100;
-
-            if (student.status === 'active') {
-                totalStud++;
-                
-                // Segmentation
-                const mod = student.modality || 'Não Informado';
-                const freq = student.classes_per_week || 'Não Informado';
-                const genderNormalized = student.gender && student.gender.toLowerCase().startsWith('m') ? 'masc' : 'fem';
-
-                if (!modFreqCounts[mod]) modFreqCounts[mod] = { total: 0 };
-                if (!modFreqCounts[mod][freq]) modFreqCounts[mod][freq] = { masc: 0, fem: 0, total: 0 };
-
-                modFreqCounts[mod].total += 1;
-                modFreqCounts[mod][freq].total += 1;
-                modFreqCounts[mod][freq][genderNormalized] += 1;
-
-                // Revenue
-                modRevCounts[mod] = (modRevCounts[mod] || 0) + monthlyFee;
-                
-                // Forecast
-                nextMonthFore += monthlyFee;
-
-                // Expected this month
-                const dueDate = new Date(student.due_date);
-                if (dueDate >= startOfCurrentMonth && dueDate < startOfNextMonth) {
-                    monthlyExp += monthlyFee;
-                }
-            }
-        });
-
-        setStats({
-            annualRevenue: annualRev,
-            monthlyReceived: monthlyRec,
-            monthlyExpected: monthlyExp,
-            monthlyMissing: monthlyExp - monthlyRec,
-            nextMonthForecast: nextMonthFore,
-            totalStudents: totalStud
-        });
-
-        setModalityFrequencyCounts(modFreqCounts);
-        setModalityRevenueCounts(modRevCounts);
-    };
-
-    // --- CHART FUNCTIONS ---
-
-    const updateChart = (type: any, labels: string[], data: number[], title: string, backgroundColors: string[], isRevenueMode: boolean) => {
-        if (chartInstanceRef.current) {
-            chartInstanceRef.current.destroy();
-        }
-
-        if (!chartRef.current) return;
-
-        const ctx = chartRef.current.getContext('2d');
-        if (!ctx) return;
-
-        chartInstanceRef.current = new Chart(ctx, {
-            type: type,
-            data: {
-                labels: labels,
-                datasets: [{
-                    data: data,
-                    backgroundColor: backgroundColors,
-                    hoverOffset: 8,
-                    borderWidth: type === 'doughnut' ? 2 : 1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        display: true, 
-                        position: 'bottom',
-                        labels: { font: { size: 12 } }
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context: any) {
-                                let label = context.label || '';
-                                if (label) label += ': ';
-                                if (context.parsed !== null) {
-                                    if (isRevenueMode) {
-                                        label += formatCurrency(context.parsed as number);
-                                    } else {
-                                        label += context.parsed + ' alunos';
-                                    }
-                                }
-                                return label;
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    };
-
-    const renderPrimaryModalityChart = () => {
-        const labels = Object.keys(modalityRevenueCounts);
-        const data = labels.map(mod => modalityRevenueCounts[mod]);
-        const colors = labels.map(mod => MODALITY_COLORS[mod] || MODALITY_COLORS['Não Informado']);
-        
-        updateChart('doughnut', labels, data, 'Faturamento Potencial', colors, true);
-    };
-
-    const renderFrequencyChart = (modality: string) => {
-        const modData = modalityFrequencyCounts[modality];
-        if (!modData) return;
-
-        const frequencyData = Object.keys(modData).filter(key => key !== 'total');
-        const labels = frequencyData.map(freq => `${freq} Semana`);
-        const data = frequencyData.map(freq => modData[freq].total);
-        const colors = frequencyData.map((_, index) => FREQUENCY_COLORS[index % FREQUENCY_COLORS.length]);
-
-        updateChart('doughnut', labels, data, `Frequência em ${modality}`, colors, false);
-    };
-
-    // --- ACTIONS ---
-
-    const handleApproveClick = (payment: any) => {
-        setModalConfig({
-            isOpen: true,
-            title: "Aprovar Pagamento",
-            text: `Confirma a aprovação do pagamento de ${formatCurrency(payment.amount)}?`,
-            confirmText: "Confirmar Aprovação",
-            confirmClass: "bg-green-500 hover:bg-green-600",
-            onConfirm: () => processApproval(payment)
-        });
-    };
-
-    const handleRejectClick = (paymentId: string) => {
-        setModalConfig({
-            isOpen: true,
-            title: "Rejeitar Pagamento",
-            text: "Confirma a rejeição deste pagamento? Esta ação é irreversível no painel (MOCK).",
-            confirmText: "Confirmar Rejeição",
-            confirmClass: "bg-red-500 hover:bg-red-600",
-            onConfirm: () => processRejection(paymentId)
-        });
-    };
-
-    const processApproval = (payment: any) => {
-        // Simulate API call
-        setTimeout(() => {
-            // Remove from pending
-            setPendingPayments(prev => prev.filter(p => p.id !== payment.id));
-            
-            // Add to approved
-            setApprovedPayments(prev => [...prev, {
-                amount: payment.amount,
-                validated_at: new Date().toISOString()
-            }]);
-
-            // Update student due date mock
-            setStudents(prev => prev.map(s => {
-                if (s.whatsapp === payment.student_whatsapp) {
-                    const newDate = new Date();
-                    newDate.setDate(newDate.getDate() + 30);
-                    return { ...s, due_date: newDate.toISOString().split('T')[0] };
-                }
-                return s;
-            }));
-
-            setModalConfig(prev => ({ ...prev, isOpen: false }));
-            showMessageFlash('Pagamento APROVADO e mensalidade atualizada (MOCK)!', 'success');
-        }, 500);
-    };
-
-    const processRejection = (paymentId: string) => {
-        setTimeout(() => {
-            setPendingPayments(prev => prev.filter(p => p.id !== paymentId));
-            setModalConfig(prev => ({ ...prev, isOpen: false }));
-            showMessageFlash('Pagamento REJEITADO (MOCK).', 'info');
-        }, 500);
-    };
-
-    const showMessageFlash = (text: string, type: 'info' | 'success' | 'error') => {
-        setMessage({ text, type });
-        setTimeout(() => setMessage(null), 5000);
-    };
-
-    // --- RENDER HELPERS ---
-
-    const getModalityItemClass = (modality: string) => {
-        let base = "border-b border-gray-200 pb-2 mb-3 px-2 py-1 cursor-pointer transition-all border-l-4 rounded-lg ";
-        if (selectedModality === modality) {
-            base += "bg-blue-50 border-blue-500 shadow-sm font-semibold";
-        } else {
-            base += "border-transparent hover:bg-gray-50 hover:border-gray-300";
-        }
-        return base;
-    };
-
-    return (
-        <div className="max-w-4xl mx-auto font-sans bg-[#f7f9fb] min-h-screen p-4 sm:p-8">
-            <header className="mb-8 p-4 bg-white shadow-lg rounded-xl flex justify-between items-center">
-                <h1 className="text-3xl font-bold text-gray-800">Painel de Validação Financeira <span className="text-lg text-red-500">(DADOS MOCK)</span></h1>
-                <div className="text-sm text-gray-500">
-                    <span>ID do Gestor: MOCK_GESTOR_123</span>
-                </div>
-            </header>
-
-            {isLoading ? (
-                <div className="text-center p-8">
-                    <svg className="animate-spin h-8 w-8 text-indigo-500 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    <p className="mt-2 text-indigo-600">Carregando dados mock...</p>
-                </div>
-            ) : (
-                <>
-                    {/* Message Box */}
-                    {message && (
-                        <div className={`p-4 mb-4 text-sm rounded-lg ${
-                            message.type === 'success' ? 'bg-green-100 text-green-800' : 
-                            message.type === 'error' ? 'bg-red-100 text-red-800' : 
-                            'bg-blue-100 text-blue-800'
-                        }`} role="alert">
-                            {message.text}
-                        </div>
-                    )}
-
-                    {/* Statistics Section */}
-                    <section className="mb-12">
-                        <h2 className="text-2xl font-semibold mb-4 text-gray-700">Visão Geral e Estatísticas</h2>
-                        
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-                            <div className="bg-white p-5 rounded-xl shadow-lg border-l-4 border-indigo-500">
-                                <p className="text-sm font-medium text-gray-500">Faturamento Anual (Acum.)</p>
-                                <p className="text-2xl font-bold text-indigo-700 mt-1">{formatCurrency(stats.annualRevenue)}</p>
-                            </div>
-                            <div className="bg-white p-5 rounded-xl shadow-lg border-l-4 border-purple-500">
-                                <p className="text-sm font-medium text-gray-500">Previsão Próximo Mês</p>
-                                <p className="text-2xl font-bold text-purple-700 mt-1">{formatCurrency(stats.nextMonthForecast)}</p>
-                            </div>
-                            <div className="bg-white p-5 rounded-xl shadow-lg border-l-4 border-green-500">
-                                <p className="text-sm font-medium text-gray-500">Total de Alunos Ativos</p>
-                                <p className="text-2xl font-bold text-green-700 mt-1">{stats.totalStudents}</p>
-                            </div>
-                        </div>
-
-                        <div className="bg-white p-6 rounded-xl shadow-lg mb-8">
-                            <h3 className="text-xl font-semibold mb-3 text-gray-700">Status Mensal (Este Mês)</h3>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center">
-                                <div className="p-3 bg-blue-50 rounded-lg">
-                                    <p className="text-xs text-gray-500">Esperado (Vencimentos)</p>
-                                    <p className="text-xl font-bold text-blue-700 mt-1">{formatCurrency(stats.monthlyExpected)}</p>
-                                </div>
-                                <div className="p-3 bg-green-50 rounded-lg">
-                                    <p className="text-xs text-gray-500">Recebido (Aprovado)</p>
-                                    <p className="text-xl font-bold text-green-700 mt-1">{formatCurrency(stats.monthlyReceived)}</p>
-                                </div>
-                                <div className="p-3 bg-red-50 rounded-lg">
-                                    <p className="text-xs text-gray-500">Em Falta (Previsto - Recebido)</p>
-                                    <p className="text-xl font-bold text-red-700 mt-1">{formatCurrency(Math.max(0, stats.monthlyMissing))}</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Segmentation */}
-                        <div className="bg-white p-6 rounded-xl shadow-lg">
-                            <h3 className="text-xl font-semibold mb-3 text-gray-700">Segmentação de Alunos Ativos</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
-                                {/* Hierarchical List */}
-                                <div className="order-2 md:order-1">
-                                    <h4 className="font-medium text-gray-600 mb-2 border-b pb-1">Detalhe Hierárquico</h4>
-                                    <div className="space-y-3 text-sm text-gray-700">
-                                        {Object.keys(modalityFrequencyCounts).map(modality => (
-                                            <div 
-                                                key={modality} 
-                                                className={getModalityItemClass(modality)}
-                                                onClick={() => {
-                                                    if (selectedModality === modality) {
-                                                        setSelectedModality(null);
-                                                    } else {
-                                                        setSelectedModality(modality);
-                                                    }
-                                                }}
-                                            >
-                                                <p className="text-base font-bold text-indigo-700">
-                                                    {modality} (Total: {modalityFrequencyCounts[modality].total} Alunos)
-                                                </p>
-                                                <ul className="ml-4 mt-1 space-y-1 text-gray-700">
-                                                    {Object.keys(modalityFrequencyCounts[modality])
-                                                        .filter(key => key !== 'total')
-                                                        .sort()
-                                                        .map(freq => {
-                                                            const freqData = modalityFrequencyCounts[modality][freq];
-                                                            return (
-                                                                <li key={freq}>
-                                                                    <span className="text-sm font-medium">&rarr; {freq} Semana:</span> {freqData.total} alunos
-                                                                    <span className="text-xs text-gray-500 ml-2">
-                                                                        (masc {freqData.masc || 0}, fem {freqData.fem || 0})
-                                                                    </span>
-                                                                </li>
-                                                            );
-                                                        })}
-                                                </ul>
-                                            </div>
-                                        ))}
-                                    </div>
-                                    {selectedModality && (
-                                        <button 
-                                            onClick={() => setSelectedModality(null)}
-                                            className="mt-4 text-sm px-3 py-1 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition"
-                                        >
-                                            Mostrar Faturamento Potencial
-                                        </button>
-                                    )}
-                                </div>
-
-                                {/* Chart */}
-                                <div className="order-1 md:order-2">
-                                    <h4 className="font-medium text-gray-600 mb-2 border-b pb-1 text-center">
-                                        {selectedModality 
-                                            ? `Distribuição em ${selectedModality} (Contagem de Alunos)`
-                                            : 'Faturamento Potencial por Modalidade'}
-                                    </h4>
-                                    <div className="relative mx-auto max-h-[350px]"> 
-                                        <canvas ref={chartRef}></canvas>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-
-                    {/* Pending Payments List */}
-                    <main>
-                        <h2 className="text-2xl font-semibold mb-4 text-gray-700">Pagamentos Pendentes</h2>
-                        
-                        <div className="space-y-4 max-h-[70vh] overflow-y-auto p-1 scrollbar-thin scrollbar-thumb-gray-400 scrollbar-track-transparent">
-                            {pendingPayments.length === 0 ? (
-                                <div className="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded-lg mt-8" role="alert">
-                                    <p className="font-bold">Tudo Certo!</p>
-                                    <p>Não há pagamentos pendentes de validação no momento.</p>
-                                </div>
-                            ) : (
-                                pendingPayments.map(payment => {
-                                    const student = students.find(s => s.whatsapp === payment.student_whatsapp);
-                                    const studentName = student ? student.name : 'Aluno Desconhecido';
-                                    const paymentDate = new Date(payment.payment_date).toLocaleDateString('pt-BR');
-
-                                    return (
-                                        <div key={payment.id} className="bg-white p-5 shadow-md rounded-lg flex flex-col sm:flex-row justify-between items-start sm:items-center transition duration-300 hover:shadow-lg">
-                                            <div className="flex-1 min-w-0 mb-4 sm:mb-0">
-                                                <p className="text-lg font-semibold text-gray-800 truncate">{studentName}</p>
-                                                <p className="text-sm text-gray-500">WhatsApp: {payment.student_whatsapp}</p>
-                                                <p className="text-sm text-gray-600">Data do Pagamento: {paymentDate}</p>
-                                                <p className="text-xl font-bold text-indigo-600 mt-1">{formatCurrency(payment.amount)}</p>
-                                            </div>
-                                            <div className="flex items-center space-x-3 w-full sm:w-auto">
-                                                <a href={payment.proof_url} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 text-sm font-medium border border-indigo-200 bg-indigo-50 p-2 rounded-lg transition duration-150 whitespace-nowrap">
-                                                    Ver Comprovativo
-                                                </a>
-                                                <button 
-                                                    onClick={() => handleApproveClick(payment)}
-                                                    className="bg-green-500 hover:bg-green-600 text-white font-medium py-2 px-4 rounded-lg shadow-md transition duration-150 whitespace-nowrap"
-                                                >
-                                                    Aprovar
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleRejectClick(payment.id)}
-                                                    className="bg-red-500 hover:bg-red-600 text-white font-medium py-2 px-4 rounded-lg shadow-md transition duration-150 whitespace-nowrap"
-                                                >
-                                                    Rejeitar
-                                                </button>
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
-                    </main>
-                </>
-            )}
-
-            {/* Confirmation Modal */}
-            {modalConfig.isOpen && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 transform transition-all">
-                        <h3 className="text-xl font-bold text-gray-800 mb-4">{modalConfig.title}</h3>
-                        <p className="text-gray-600 mb-6">{modalConfig.text}</p>
-                        <div className="flex justify-end space-x-3">
-                            <button 
-                                onClick={() => setModalConfig(prev => ({ ...prev, isOpen: false }))}
-                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition duration-150"
-                            >
-                                Cancelar
-                            </button>
-                            <button 
-                                onClick={modalConfig.onConfirm}
-                                className={`${modalConfig.confirmClass} px-4 py-2 text-white rounded-lg transition duration-150`}
-                            >
-                                {modalConfig.confirmText}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+  return (
+    <div className="max-w-4xl mx-auto p-6 bg-white rounded-2xl shadow-xl font-['Quicksand'] relative">
+      
+      {/* CORREÇÃO CRÍTICA: Toast Flutuante com z-index alto para aparecer SOBRE o modal */}
+      {message && (
+        <div className={`fixed top-4 right-4 z-[100] px-6 py-4 rounded-lg shadow-2xl flex items-center gap-3 animate-in slide-in-from-right duration-300 ${
+            message.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+        }`}>
+            <span className="text-2xl">{message.type === 'success' ? '✓' : '⚠'}</span>
+            <div>
+                <p className="font-bold">{message.type === 'success' ? 'Sucesso' : 'Atenção'}</p>
+                <p className="text-sm opacity-90">{message.text}</p>
+            </div>
+            <button onClick={() => setMessage(null)} className="ml-4 text-white/50 hover:text-white">✕</button>
         </div>
-    );
+      )}
+
+      <header className="flex justify-between items-center mb-8 border-b pb-4">
+        <div>
+          <h1 className="text-2xl font-bold text-[#232F34]">Painel Financeiro</h1>
+          <p className="text-sm text-gray-500 mt-1">Unidade: <span className="font-semibold text-[#FF9800]">{tenantName}</span></p>
+        </div>
+        <div className="flex gap-2">
+           <button onClick={() => { setLoading(true); handleRefresh().finally(() => setLoading(false)); }} className="bg-gray-100 text-gray-600 px-3 py-2 rounded-lg hover:bg-gray-200 transition">↻</button>
+           <button onClick={() => setIsRegistrationModalOpen(true)} className="bg-[#FF9800] text-white px-4 py-2 rounded-lg hover:bg-[#E68900] shadow-md transition">Novo Aluno</button>
+        </div>
+      </header>
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        <KpiCard title="Faturamento Anual" value={loading ? '...' : formatCurrency(stats?.annualRevenue || 0)} color="border-[#232F34]" />
+        <KpiCard title="Previsão Mês" value={loading ? '...' : formatCurrency(stats?.nextMonthForecast || 0)} color="border-[#FF9800]" />
+        <KpiCard title="Alunos Ativos" value={loading ? '...' : (stats?.totalStudents || 0).toString()} color="border-[#4CAF50]" />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+        {/* Lista de Modalidades */}
+        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+          <h3 className="font-bold text-lg mb-4 text-[#232F34]">Modalidades</h3>
+          {loading ? <p className="text-gray-400">Carregando...</p> : 
+           !segmentation?.modalityFrequencyCounts || Object.keys(segmentation.modalityFrequencyCounts).length === 0 ? <p>Sem dados.</p> : 
+           Object.keys(segmentation.modalityFrequencyCounts).map(mod => (
+             <div key={mod} onClick={() => setSelectedModality(selectedModality === mod ? null : mod)} 
+                  className={`p-3 mb-2 cursor-pointer rounded-lg transition-all border ${selectedModality === mod ? 'bg-white border-[#FF9800] shadow-sm' : 'bg-white border-transparent hover:border-gray-200'}`}>
+               <div className="flex justify-between font-semibold text-[#232F34]">
+                 <span>{mod}</span>
+                 <span className="text-[#FF9800]">{segmentation.modalityFrequencyCounts[mod].total} Alunos</span>
+               </div>
+             </div>
+          ))}
+          {selectedModality && <button onClick={() => setSelectedModality(null)} className="mt-2 text-sm text-gray-500 hover:text-[#FF9800]">Limpar filtro</button>}
+        </div>
+
+        {/* Gráfico */}
+        <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col">
+          <h3 className="font-bold text-center mb-4 text-[#232F34]">{chartData.title}</h3>
+          <div className="flex-1 relative min-h-[250px]">
+            <Doughnut 
+              data={{ 
+                labels: chartData.labels, 
+                datasets: [{ 
+                  data: chartData.data, 
+                  backgroundColor: chartData.colors,
+                  borderWidth: 0,
+                  hoverOffset: 10
+                }] 
+              }} 
+              options={{ 
+                maintainAspectRatio: false,
+                plugins: { 
+                  legend: { position: 'bottom', labels: { usePointStyle: true, font: { family: 'Quicksand' } } },
+                  tooltip: { 
+                    callbacks: { 
+                      label: (ctx) => {
+                        const labelStr = ctx.label ? `${ctx.label}: ` : '';
+                        const val = ctx.parsed;
+                        const suffix = chartData.isRev ? formatCurrency(val) : `${val} alunos`;
+                        return labelStr + suffix;
+                      }
+                    }
+                  }
+                }
+              }} 
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Tabela de Pagamentos */}
+      <h2 className="text-xl font-bold mb-4 text-[#232F34]">Pagamentos Pendentes</h2>
+      {loading ? <p>Verificando pagamentos...</p> : !stats?.pendingPayments || stats.pendingPayments.length === 0 ? (
+        <div className="p-4 bg-green-50 text-green-700 rounded-lg border border-green-100 flex items-center">
+          <span className="mr-2">✓</span> Todos os pagamentos em dia.
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-gray-200">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-[#232F34] text-white">
+              <tr>
+                <th className="p-3">Aluno</th>
+                <th className="p-3">Valor</th>
+                <th className="p-3">Data</th>
+                <th className="p-3 text-right">Ação</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.pendingPayments.map(p => (
+                <tr key={p.id} className="border-b hover:bg-gray-50 last:border-0">
+                  <td className="p-3 font-medium">{p.nome_aluno}</td>
+                  <td className="p-3 font-bold text-[#FF9800]">{formatCurrency(p.valor)}</td>
+                  <td className="p-3 text-gray-500">{new Date(p.data_pagamento).toLocaleDateString('pt-BR')}</td>
+                  <td className="p-3 text-right">
+                    <button 
+                      onClick={() => { setConfirmationAction({ paymentId: p.id, studentId: p.student_id, amount: p.valor }); setIsConfirmationModalOpen(true); }} 
+                      className="bg-blue-50 text-blue-600 px-3 py-1 rounded hover:bg-blue-100 font-medium transition"
+                    >
+                      Aprovar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Modal Cadastro */}
+      {isRegistrationModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-6 rounded-2xl w-full max-w-md shadow-2xl animate-in fade-in zoom-in duration-200">
+            <h2 className="text-2xl font-bold mb-6 text-[#232F34]">Novo Aluno</h2>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              handleRegister({
+                nome: fd.get('nome') as string,
+                whatsapp: fd.get('whatsapp') as string,
+                data_vencimento: fd.get('data_vencimento') as string,
+                mensalidade: parseFloat(fd.get('mensalidade') as string),
+                modalidade: fd.get('modalidade') as string,
+                classes_per_week: fd.get('freq') as string,
+                gender: fd.get('gender') as any
+              });
+            }}>
+              <div className="space-y-3">
+                <input name="nome" placeholder="Nome Completo" required className="w-full rounded-lg border border-gray-200 bg-[#fbfbfb] p-3 text-sm text-gray-700 placeholder-[#cecece] placeholder:opacity-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
+                <input name="whatsapp" placeholder="WhatsApp (55...)" required className="w-full rounded-lg border border-gray-200 bg-[#fbfbfb] p-3 text-sm text-gray-700 placeholder-[#cecece] placeholder:opacity-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
+                <div className="flex gap-3">
+                  <div className="w-1/2">
+                    <label className="text-xs text-gray-500 ml-1">Vencimento</label>
+                    <input name="data_vencimento" type="date" required className="w-full rounded-lg border border-gray-200 bg-[#fbfbfb] p-3 text-sm text-gray-700 placeholder-[#cecece] placeholder:opacity-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all" defaultValue={new Date().toISOString().split('T')[0]} />
+                  </div>
+                  <div className="w-1/2">
+                    <label className="text-xs text-gray-500 ml-1">Valor (R$)</label>
+                    <input name="mensalidade" type="number" step="0.01" placeholder="0,00" required className="w-full rounded-lg border border-gray-200 bg-[#fbfbfb] p-3 text-sm text-gray-700 placeholder-[#cecece] placeholder:opacity-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all" />
+                  </div>
+                </div>
+                <select name="modalidade" className="w-full rounded-lg border border-gray-200 bg-[#fbfbfb] p-3 text-sm text-gray-700 placeholder-[#cecece] placeholder:opacity-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all">
+                  <option value="Jiu-Jitsu">Jiu-Jitsu</option>
+                  <option value="Crossfit">Crossfit</option>
+                  <option value="Musculação">Musculação</option>
+                  <option value="Yoga">Yoga</option>
+                </select>
+                <div className="flex gap-3">
+                  <select name="freq" className="w-1/2 rounded-lg border border-gray-200 bg-[#fbfbfb] p-3 text-sm text-gray-700 placeholder-[#cecece] placeholder:opacity-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all">
+                    <option value="2x">2x Semana</option>
+                    <option value="3x">3x Semana</option>
+                    <option value="5x">5x Semana</option>
+                    <option value="Livre">Livre</option>
+                  </select>
+                  <select name="gender" className="w-1/2 rounded-lg border border-gray-200 bg-[#fbfbfb] p-3 text-sm text-gray-700 placeholder-[#cecece] placeholder:opacity-100 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all">
+                    <option value="Masculino">Masculino</option>
+                    <option value="Feminino">Feminino</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 mt-6">
+                <button type="button" onClick={() => setIsRegistrationModalOpen(false)} className="px-5 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition">Cancelar</button>
+                <button type="submit" disabled={loading} className="px-5 py-2 bg-[#FF9800] text-white rounded-lg hover:bg-[#E68900] shadow-lg shadow-orange-200 transition disabled:opacity-50">
+                  {loading ? 'Salvando...' : 'Salvar Aluno'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isConfirmationModalOpen && confirmationAction && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-2xl shadow-2xl w-full max-w-sm">
+            <h3 className="font-bold text-lg mb-2 text-[#232F34]">Confirmar Aprovação</h3>
+            <p className="text-gray-600 mb-6">Deseja confirmar o recebimento de <span className="font-bold text-[#FF9800]">{formatCurrency(confirmationAction.amount)}</span>?</p>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setIsConfirmationModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition">Não</button>
+              <button onClick={confirmPayment} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-lg shadow-green-200 transition">Sim, confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
+
+const KpiCard = ({ title, value, color }: { title: string, value: string, color: string }) => (
+  <div className={`p-5 bg-white shadow-sm rounded-xl border-l-4 ${color} border border-gray-100`}>
+    <p className="text-gray-500 text-sm font-medium uppercase tracking-wide">{title}</p>
+    <p className="text-2xl font-bold text-[#232F34] mt-1">{value}</p>
+  </div>
+);
