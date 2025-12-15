@@ -1,7 +1,7 @@
 'use server';
 
 import { createClient } from '@/app/utils/supabase/server';
-import { revalidatePath } from 'next/cache';
+import { revalidatePath, unstable_noStore as noStore } from 'next/cache';
 
 // =================================================================
 // DEFINIÇÕES DE TIPOS
@@ -12,23 +12,49 @@ export interface NewStudentData {
   whatsapp: string;
   data_vencimento: string; 
   mensalidade: number;
-  modalidade: string;
+  modalidade: string | string[];
   classes_per_week: string;
   gender: 'Masculino' | 'Feminino';
+}
+
+export interface ViewFinancialAudit {
+  student_id: string;
+  student_name: string;
+  whatsapp: string;
+  modalidade: string | string[];
+  valor_esperado: number;
+  data_vencimento: string;
+  payment_id: string | null;
+  valor_pago: number | null;
+  payment_status: string | null;
+  data_pagamento: string | null;
+  status_financeiro: 'pago' | 'analise' | 'atrasado' | 'aberto';
+}
+
+export interface FinancialAudit {
+  student_id: string;
+  student_name: string;
+  student_whatsapp: string;
+  due_date: string;
+  amount: number;
+  status: 'paid' | 'pending' | 'overdue' | 'open';
+  payment_id: string | null;
 }
 
 export interface PendingPayment {
   id: string;
   student_id: string;
-  nome_aluno: string; 
+  nome_aluno: string;
   whatsapp: string;
   valor: number;
   data_pagamento: string;
+  status: 'pago' | 'analise' | 'atrasado' | 'aberto';
+  modalidade: string | string[]; // Adicionado: Modalidade do aluno para exibição na lista de pendências
 }
+
 
 export interface DashboardStats {
   annualRevenue: number;
-  nextMonthForecast: number;
   totalStudents: number;
   monthlyExpected: number;
   monthlyReceived: number;
@@ -45,6 +71,14 @@ export interface SegmentationCounts {
     modalityRevenueCounts: { [modality: string]: number };
 }
 
+export interface SimpleStudent {
+  id: string;
+  nome: string;
+  mensalidade: number;
+  modalidade: string | string[];
+  data_vencimento: string;
+}
+
 // =================================================================
 // UTILITÁRIOS
 // =================================================================
@@ -55,34 +89,164 @@ async function getTenantId(): Promise<string | null> {
 
   if (!user) return null;
   
-  // 1. Tenta pegar dos metadados (mais rápido)
-  const tenantsMetadata = user.app_metadata.tenants as string[] | undefined;
-  if (tenantsMetadata && tenantsMetadata.length > 0) return tenantsMetadata[0];
-
-  // 2. Fallback: Busca na tabela tenant_members
   const { data: member } = await supabase
     .from('tenant_members')
     .select('tenant_id')
     .eq('user_id', user.id)
     .single();
 
-  if (member) return member.tenant_id;
-
-  return null;
+  return member?.tenant_id || null;
 }
 
 // =================================================================
 // SERVER ACTIONS
 // =================================================================
 
-export async function registerNewStudent(data: NewStudentData) {
-  console.log("SERVER ACTION: Iniciando registro de aluno...", data); // DEBUG LOG
-  
+export async function getFinancialAudit(): Promise<FinancialAudit[]> {
+  noStore(); // Desativa o cache para esta função
   const tenantId = await getTenantId();
-  console.log("SERVER ACTION: Tenant ID encontrado:", tenantId); // DEBUG LOG
+  if (!tenantId) return [];
 
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from('financial_audit_current_month')
+    .select('*')
+    .eq('tenant_id', tenantId)
+    .order('data_vencimento', { ascending: true });
+
+  if (error) {
+    console.error("Erro ao buscar auditoria financeira:", JSON.stringify(error, null, 2));
+    return [];
+  }
+  
+  const mappedData: FinancialAudit[] = data.map((item: ViewFinancialAudit) => ({
+    student_id: item.student_id,
+    student_name: item.student_name,
+    student_whatsapp: item.whatsapp,
+    due_date: item.data_vencimento,
+    amount: item.valor_pago ?? item.valor_esperado,
+    status: item.status_financeiro === 'pago' ? 'paid'
+          : item.status_financeiro === 'analise' ? 'pending'
+          : item.status_financeiro === 'atrasado' ? 'overdue'
+          : 'open',
+    payment_id: item.payment_id
+  }));
+  
+  return mappedData;
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  noStore(); // Desativa o cache para esta função
+  const tenantId = await getTenantId();
   if (!tenantId) {
-    console.error("SERVER ACTION ERRO: Tenant ID não encontrado para o usuário.");
+    return { annualRevenue: 0, totalStudents: 0, monthlyExpected: 0, monthlyReceived: 0, pendingPayments: [] };
+  }
+
+  const supabase = await createClient();
+  const now = new Date();
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
+  const startOfYear = new Date(now.getFullYear(), 0, 1).toISOString();
+  const startOfNextYear = new Date(now.getFullYear() + 1, 0, 1).toISOString();
+
+  const studentsPromise = supabase.from('students').select('mensalidade').eq('tenant_id', tenantId).eq('status', 'active');
+  const monthlyPaymentsPromise = supabase.from('payments').select('valor').eq('tenant_id', tenantId).eq('status', 'approved').gte('validated_at', startOfMonth).lt('validated_at', startOfNextMonth);
+  const annualPaymentsPromise = supabase.from('payments').select('valor').eq('tenant_id', tenantId).eq('status', 'approved').gte('validated_at', startOfYear).lt('validated_at', startOfNextYear);
+  const pendingPaymentsPromise = supabase.from('financial_audit_current_month').select('*').eq('tenant_id', tenantId).in('status_financeiro', ['analise', 'atrasado']);
+
+  const [
+    { data: studentsData, error: studentsError },
+    { data: monthlyPaymentsData, error: monthlyPaymentsError },
+    { data: annualPaymentsData, error: annualPaymentsError },
+    { data: pendingPaymentsData, error: pendingPaymentsError },
+  ] = await Promise.all([studentsPromise, monthlyPaymentsPromise, annualPaymentsPromise, pendingPaymentsPromise]);
+
+  if (studentsError) console.error("Erro ao buscar alunos:", JSON.stringify(studentsError, null, 2));
+  if (monthlyPaymentsError) console.error("Erro ao buscar pagamentos mensais:", JSON.stringify(monthlyPaymentsError, null, 2));
+  if (annualPaymentsError) console.error("Erro ao buscar pagamentos anuais:", JSON.stringify(annualPaymentsError, null, 2));
+  if (pendingPaymentsError) console.error("Erro ao buscar pagamentos pendentes:", JSON.stringify(pendingPaymentsError, null, 2));
+
+  const totalStudents = studentsData?.length || 0;
+  const monthlyExpected = (studentsData || []).reduce((sum, s) => sum + (s.mensalidade || 0), 0);
+  const monthlyReceived = (monthlyPaymentsData || []).reduce((sum, p) => sum + (p.valor || 0), 0);
+  const annualRevenue = (annualPaymentsData || []).reduce((sum, p) => sum + (p.valor || 0), 0);
+  
+  const pendingPayments: PendingPayment[] = (pendingPaymentsData as ViewFinancialAudit[] || []).map(item => ({
+    id: item.payment_id ?? `late_${item.student_id}`,
+    student_id: item.student_id,
+    nome_aluno: item.student_name,
+    whatsapp: item.whatsapp,
+    valor: item.valor_pago ?? item.valor_esperado,
+    data_pagamento: item.data_pagamento ?? item.data_vencimento,
+    status: item.status_financeiro,
+    modalidade: item.modalidade, // Adicionado a modalidade
+  }));
+  
+  return { annualRevenue, totalStudents, monthlyExpected, monthlyReceived, pendingPayments };
+}
+
+export async function getSegmentationData(): Promise<SegmentationCounts> {
+  noStore(); // Desativa o cache para esta função
+  const tenantId = await getTenantId();
+  if (!tenantId) return { modalityFrequencyCounts: {}, modalityRevenueCounts: {} };
+  
+  const supabase = await createClient();
+  const { data: students, error } = await supabase
+    .from('students')
+    .select('mensalidade, modalidade, classes_per_week, gender')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'active'); 
+
+  if (error) {
+    console.error("Erro ao buscar dados de segmentação:", JSON.stringify(error, null, 2));
+    return { modalityFrequencyCounts: {}, modalityRevenueCounts: {} };
+  }
+
+  const modalityFrequencyCounts: SegmentationCounts['modalityFrequencyCounts'] = {};
+  const modalityRevenueCounts: SegmentationCounts['modalityRevenueCounts'] = {};
+
+  (students || []).forEach((student: any) => {
+    const fee = student.mensalidade || 0;
+    const freq = student.classes_per_week || 'Não Informado';
+    const gender = student.gender?.toLowerCase().startsWith('m') ? 'masc' : 'fem';
+    
+    let modalities: string[] = [];
+    if (Array.isArray(student.modalidade)) {
+        modalities = student.modalidade;
+    } else if (typeof student.modalidade === 'string') {
+        try {
+            const parsed = JSON.parse(student.modalidade);
+            modalities = Array.isArray(parsed) ? parsed : [student.modalidade];
+        } catch (e) {
+            modalities = [student.modalidade];
+        }
+    }
+    
+    if (modalities.length === 0) modalities.push('Não Informado');
+    
+    const apportionedRevenue = fee / modalities.length;
+
+    modalities.forEach(mod => {
+        if (!modalityFrequencyCounts[mod]) {
+          modalityFrequencyCounts[mod] = { total: 0 } as any;
+        }
+        const modEntry = modalityFrequencyCounts[mod];
+        if (!(modEntry as any)[freq]) {
+          (modEntry as any)[freq] = { masc: 0, fem: 0, total: 0 };
+        }
+        modEntry.total += 1;
+        (modEntry as any)[freq].total += 1;
+        (modEntry as any)[freq][gender] += 1;
+        modalityRevenueCounts[mod] = (modalityRevenueCounts[mod] || 0) + apportionedRevenue;
+    });
+  });
+
+  return { modalityFrequencyCounts, modalityRevenueCounts };
+}
+
+export async function registerNewStudent(data: NewStudentData) {
+  const tenantId = await getTenantId();
+  if (!tenantId) {
     return { success: false, message: 'Erro de permissão: Academia não identificada.' };
   }
 
@@ -95,22 +259,18 @@ export async function registerNewStudent(data: NewStudentData) {
       whatsapp: data.whatsapp,
       data_vencimento: data.data_vencimento,
       mensalidade: data.mensalidade,
-      modalidade: data.modalidade,
+      modalidade: Array.isArray(data.modalidade) ? JSON.stringify(data.modalidade) : data.modalidade,
       classes_per_week: data.classes_per_week,
       gender: data.gender,
       status: 'active',
     });
 
-    if (error) {
-      console.error("SERVER ACTION ERRO SUPABASE:", error); // DEBUG LOG
-      throw error;
-    }
+    if (error) throw error;
     
-    console.log("SERVER ACTION: Sucesso! Revalidando caminho...");
     revalidatePath(`/academia/${tenantId}/dashboard`);
     return { success: true, message: 'Aluno cadastrado com sucesso.' };
   } catch (e: any) {
-    console.error("SERVER ACTION EXCEPTION:", e);
+    console.error("Erro ao registrar aluno:", JSON.stringify(e, null, 2));
     return { success: false, message: `Erro ao salvar no banco: ${e.message}` };
   }
 }
@@ -122,128 +282,119 @@ export async function approvePayment(paymentId: string, studentId: string, amoun
   const supabase = await createClient();
   
   try {
-    // 1. Aprovar pagamento
-    const { error: paymentError } = await supabase.from('payments')
-      .update({ status: 'approved', validated_at: new Date().toISOString() })
-      .eq('id', paymentId).eq('tenant_id', tenantId);
+    if (paymentId.startsWith('late_')) {
+      const { error: insertError } = await supabase.from('payments').insert({
+        tenant_id: tenantId,
+        student_id: studentId,
+        valor: amount,
+        status: 'approved',
+        validated_at: new Date().toISOString(),
+        data_pagamento: new Date().toISOString().split('T')[0],
+      });
+      if (insertError) throw insertError;
+    } else {
+      const { error: updateError } = await supabase.from('payments')
+        .update({ status: 'approved', validated_at: new Date().toISOString() })
+        .eq('id', paymentId)
+        .eq('tenant_id', tenantId);
+      if (updateError) throw updateError;
+    }
 
-    if (paymentError) throw paymentError;
-    
-    // 2. Buscar vencimento atual
-    const { data: student } = await supabase.from('students')
-      .select('data_vencimento').eq('id', studentId).single();
+    const { data: student, error: studentError } = await supabase
+      .from('students')
+      .select('data_vencimento')
+      .eq('id', studentId)
+      .single();
 
-    if (!student) throw new Error('Aluno não encontrado');
+    if (studentError) throw studentError;
+    if (!student) throw new Error('Aluno não encontrado para atualizar vencimento.');
 
-    // 3. Somar 30 dias
     const newDueDate = new Date(student.data_vencimento);
-    newDueDate.setDate(newDueDate.getDate() + 30);
+    newDueDate.setUTCDate(newDueDate.getUTCDate() + 30);
     const newDueDateISO = newDueDate.toISOString().split('T')[0];
     
-    // 4. Atualizar aluno
-    const { error: updateError } = await supabase.from('students')
+    const { error: updateStudentError } = await supabase.from('students')
       .update({ data_vencimento: newDueDateISO })
-      .eq('id', studentId).eq('tenant_id', tenantId);
+      .eq('id', studentId);
 
-    if (updateError) throw updateError;
+    if (updateStudentError) throw updateStudentError;
 
     revalidatePath(`/academia/${tenantId}/dashboard`);
     return { success: true, message: 'Pagamento aprovado e vencimento atualizado.' };
-  } catch (e) {
-    return { success: false, message: 'Erro ao processar aprovação.' };
+  } catch (e: any) {
+    console.error("Erro ao aprovar pagamento:", JSON.stringify(e, null, 2));
+    return { success: false, message: `Erro ao processar aprovação: ${e.message}` };
   }
 }
 
-export async function getDashboardStats(): Promise<DashboardStats> {
+export async function getActiveStudentsList(search?: string): Promise<SimpleStudent[]> {
+  noStore(); // Desativa o cache para esta função
   const tenantId = await getTenantId();
-
-  if (!tenantId) {
-    return { annualRevenue: 0, nextMonthForecast: 0, totalStudents: 0, monthlyExpected: 0, monthlyReceived: 0, pendingPayments: [] };
-  }
+  if (!tenantId) return [];
 
   const supabase = await createClient();
-  const now = new Date();
-  const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const startOfNextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1).toISOString();
-  const currentYear = now.getFullYear();
+  let query = supabase
+    .from('students')
+    .select('id, nome, mensalidade, modalidade, data_vencimento')
+    .eq('tenant_id', tenantId)
+    .eq('status', 'active')
+    .order('data_vencimento', { ascending: true })
+    .limit(5);
+
+  if (search && search.trim().length > 1) {
+    query = query.ilike('nome', `%${search.trim()}%`);
+  }
   
-  const promises: any[] = [];
-
-  // P1: Alunos Ativos
-  promises.push(supabase.from('students').select('*').eq('tenant_id', tenantId).eq('status', 'active'));
-
-  // P2: Pagamentos Pendentes
-  promises.push(supabase.from('payments').select('*, student:students(nome, whatsapp)').eq('tenant_id', tenantId).eq('status', 'pending'));
-
-  // P3: Receita Mensal
-  promises.push(supabase.from('payments').select('valor').eq('tenant_id', tenantId).eq('status', 'approved').gte('validated_at', startOfCurrentMonth).lt('validated_at', startOfNextMonth));
-
-  // P4: Receita Anual
-  promises.push(supabase.from('payments').select('valor').eq('tenant_id', tenantId).eq('status', 'approved').gte('validated_at', `${currentYear}-01-01T00:00:00Z`).lt('validated_at', `${currentYear + 1}-01-01T00:00:00Z`));
-
-  const results = await Promise.all(promises);
+  const { data, error } = await query;
   
-  const studentsData = results[0].data || [];
-  const pendingPaymentsData = results[1].data || [];
-  const monthlyReceivedData = results[2].data || [];
-  const annualRevenueData = results[3].data || [];
-
-  const totalStudents = studentsData.length;
-  const nextMonthForecast = studentsData.reduce((sum: number, s: any) => sum + (s.mensalidade || 0), 0);
-  const monthlyReceived = monthlyReceivedData.reduce((sum: number, p: any) => sum + (p.valor || 0), 0);
-  const annualRevenue = annualRevenueData.reduce((sum: number, p: any) => sum + (p.valor || 0), 0);
-
-  const monthlyExpected = studentsData
-    .filter((s: any) => {
-      const d = new Date(s.data_vencimento);
-      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
-    })
-    .reduce((sum: number, s: any) => sum + (s.mensalidade || 0), 0);
-
-  const pendingPayments = pendingPaymentsData.map((p: any) => ({
-    id: p.id,
-    student_id: p.student_id,
-    nome_aluno: p.student?.nome || 'Desconhecido',
-    whatsapp: p.student?.whatsapp || '',
-    valor: p.valor,
-    data_pagamento: p.data_pagamento,
-  }));
-
-  return { annualRevenue, nextMonthForecast, totalStudents, monthlyExpected, monthlyReceived, pendingPayments };
+  if (error) {
+    console.error("Erro ao buscar lista de alunos:", JSON.stringify(error, null, 2));
+    return [];
+  }
+  return data;
 }
 
-export async function getSegmentationData(): Promise<SegmentationCounts> {
+export async function registerManualPayment(studentId: string, amount: number, modalidade?: string) {
   const tenantId = await getTenantId();
-  if (!tenantId) return { modalityFrequencyCounts: {}, modalityRevenueCounts: {} };
+  if (!tenantId) return { success: false, message: 'Academia não encontrada.' };
   
   const supabase = await createClient();
-  const { data: students } = await supabase.from('students').select('*').eq('tenant_id', tenantId).eq('status', 'active'); 
+  try {
+    const { error: insertError } = await supabase.from('payments').insert({
+      tenant_id: tenantId,
+      student_id: studentId,
+      valor: amount,
+      status: 'approved',
+      validated_at: new Date().toISOString(),
+      data_pagamento: new Date().toISOString().split('T')[0],
+      modalidade: modalidade,
+    });
 
-  const modalityFrequencyCounts: SegmentationCounts['modalityFrequencyCounts'] = {};
-  const modalityRevenueCounts: SegmentationCounts['modalityRevenueCounts'] = {};
+    if (insertError) throw insertError;
+    
+    const { data: student, error: studentError } = await supabase
+      .from('students')
+      .select('data_vencimento')
+      .eq('id', studentId)
+      .single();
 
-  (students || []).forEach((student: any) => {
-    const fee = student.mensalidade || 0;
-    const mod = student.modalidade || 'Não Informado';
-    const freq = student.classes_per_week || 'Não Informado';
-    const gender = student.gender?.toLowerCase().startsWith('m') ? 'masc' : 'fem';
-    
-    if (!modalityFrequencyCounts[mod]) {
-      modalityFrequencyCounts[mod] = { total: 0 } as any;
-    }
-    
-    const modEntry = modalityFrequencyCounts[mod];
-    
-    if (!(modEntry as any)[freq]) {
-      (modEntry as any)[freq] = { masc: 0, fem: 0, total: 0 };
-    }
-    
-    modEntry.total += 1;
-    (modEntry as any)[freq].total += 1;
-    (modEntry as any)[freq][gender] += 1;
-    
-    modalityRevenueCounts[mod] = (modalityRevenueCounts[mod] || 0) + fee;
-  });
+    if (studentError) throw studentError;
+    if (!student) throw new Error('Aluno não encontrado para atualizar vencimento.');
 
-  return { modalityFrequencyCounts, modalityRevenueCounts };
+    const newDueDate = new Date(student.data_vencimento);
+    newDueDate.setUTCDate(newDueDate.getUTCDate() + 30);
+    const newDueDateISO = newDueDate.toISOString().split('T')[0];
+    
+    const { error: updateStudentError } = await supabase.from('students')
+      .update({ data_vencimento: newDueDateISO })
+      .eq('id', studentId);
+
+    if (updateStudentError) throw updateStudentError;
+
+    revalidatePath(`/academia/${tenantId}/dashboard`);
+    return { success: true, message: 'Pagamento manual registrado com sucesso.' };
+  } catch (e: any) {
+    console.error("Erro ao registrar pagamento manual:", JSON.stringify(e, null, 2));
+    return { success: false, message: `Erro ao processar pagamento: ${e.message}` };
+  }
 }

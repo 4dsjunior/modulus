@@ -5,7 +5,7 @@ import DashboardClient from './dashboard-client';
 export default async function DashboardPage({ params }: { params: Promise<{ tenant: string }> }) {
   const { tenant } = await params;
 
-  // Busca dados iniciais no servidor
+  // Busca dados iniciais no servidor. getDashboardStats agora inclui os pagamentos pendentes.
   const stats = await getDashboardStats();
   const segmentation = await getSegmentationData();
 
