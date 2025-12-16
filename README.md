@@ -205,3 +205,150 @@ Garantir que os dados no Supabase (mock) sejam atualizados para datas do mês co
 
 Implementar a lógica de pagamento manual sem tentar refatorar a configuração do Tailwind/PostCSS.
 ---------------------------------------------------------------------------------------------------------------------------------------------
+
+Contexto do Projeto: Modulus (Painel Financeiro Academias)
+
+Data de Atualização: 16 de Dezembro de 2025
+Estado: Funcional (Com simulação de data futura e bugs de atualização identificados)
+
+1. Stack Tecnológico
+
+Framework: Next.js 15+ (App Router, Server Actions).
+
+Linguagem: TypeScript.
+
+Banco de Dados: Supabase (PostgreSQL).
+
+Estilização: Tailwind CSS (Configurado com PostCSS plugin).
+
+Auth: Supabase Auth + RLS (Row Level Security).
+
+2. Arquitetura de Dados & Lógica de Negócio ("Audit Engine")
+
+Devido a limitações de Views SQL e datas de servidor, a lógica de validação financeira foi movida para o backend (TypeScript) em app/academia/actions.ts.
+
+O Fluxo "Audit Engine":
+
+Raw Fetching: Busca todos os alunos ativos e todos os pagamentos do período (sem filtros complexos de banco).
+
+Processamento em Memória:
+
+Itera sobre cada aluno ativo.
+
+Cruza com a lista de pagamentos do mês.
+
+Regra de Status:
+
+Se tem pagamento approved no mês -> Pago.
+
+Se tem pagamento pending -> Em Análise.
+
+Se não tem pagamento e data_vencimento < agora -> Atrasado.
+
+Caso contrário -> Aberto.
+
+Cache Strategy: Uso de unstable_noStore() (renomeado para noStore) em todas as leituras para evitar stale data no dashboard.
+
+3. Milestones Concluídos (Status Detalhado)
+
+A. Dashboard Financeiro (/academia/[tenant]/dashboard)
+
+$$\~$$
+
+ KPI Cards:
+
+Previsão Mensal: OK
+
+Total de Alunos: OK
+
+Faturamento Anual: N/G (Não Atualiza/Travado) - Precisa de revisão urgente no cálculo ou cache.
+
+$$\~$$
+
+ Gráficos:
+
+Distribuição por Modalidade (Frequência e Receita): OK
+
+Falta: Gráfico de distribuição por Sexo.
+
+$$\~$$
+
+ Lista de Pendências:
+
+Exibição (Nome, Valor, Modalidade): OK
+
+Problema: Não atualiza a lista visualmente logo após o registro do pagamento (o item continua lá até refresh forçado).
+
+Lógica de Negócio: A lista não deve filtrar apenas pela competência do mês atual. Dívidas antigas (ex: 3 meses atrás) devem persistir na visualização até serem quitadas.
+
+$$\~$$
+
+ Títulos Dinâmicos:
+
+Exibe mês/ano de referência (ex: "12/2025").
+
+Ajuste: Remover referência de data do título de "Pagamentos Pendentes" (conforme regra de negócio acima).
+
+B. Gestão de Pagamentos
+
+$$x$$
+
+ Pagamento Manual: Modal funcional com busca de aluno e seleção de modalidade. OK
+
+$$x$$
+
+ Confirmação: Botão de "Resolver" na lista de pendências aprova pagamentos. OK
+
+$$x$$
+
+ Correção de Colunas: Gravação correta na coluna modalidade da tabela payments. OK
+
+C. Infraestrutura & Correções Críticas (NÃO REVERTER)
+
+$$x$$
+
+ Next.js 15 Async Params: Em page.tsx, params é tratado como Promise (const { tenant } = await params).
+
+$$x$$
+
+ Tailwind/PostCSS: Configuração ajustada para usar @tailwindcss/postcss no postcss.config.mjs para compatibilidade com versões recentes.
+
+$$x$$
+
+ Tipagem TypeScript: Correção de erros de "Implicit Any", "Expected Arguments" e caminhos de importação (../../utils...).
+
+4. "Hacks" Ativos e Pontos de Atenção
+
+A. Time Travel (Data Simulada)
+
+Local: app/academia/actions.ts -> getDashboardStats
+Descrição: Os dados de mock no banco estão em Dezembro de 2025. Para que o dashboard não apareça vazio hoje (2024/2025 real), a data base foi fixada:
+
+// ATENÇÃO: Alterar para new Date() apenas quando for para produção real
+const now = new Date('2025-12-15T12:00:00Z'); 
+
+
+Ação Futura: Quando os dados reais forem inseridos, remover essa linha e usar new Date().
+
+B. Funções Admin Dummy
+
+Local: app/admin/create/actions.ts
+Descrição: Funções createUser, updateUser, deleteUser existem apenas como placeholders (retornam log de aviso) para permitir a compilação das rotas administrativas. Precisam ser implementadas com a API supabase.auth.admin.
+
+5. Próximos Passos (Roadmap Prioritário)
+
+Correção de Atualização (Reatividade): Garantir que Faturamento Anual e Lista de Pendências atualizem imediatamente após uma ação (resolver cache/state).
+
+Ajuste Lógico de Pendências: Alterar a query/lógica para buscar pendências de todo o histórico, não apenas do mês corrente.
+
+Gráfico de Sexo: Implementar o gráfico faltante no dashboard.
+
+Refinamento de RLS: Garantir permissões de leitura na tabela tenant_members.
+
+Remover Time Travel: Voltar a data para o presente quando a base de dados for resetada/produção.
+
+6. Comandos Úteis
+
+Rodar Projeto: npm run dev
+
+Instalar Dependências (se falhar): npm install @tailwindcss/postcss autoprefixer
